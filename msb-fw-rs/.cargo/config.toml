@@ -1,0 +1,12 @@
+[target.thumbv7em-none-eabi]
+runner = 'probe-rs run --chip STM32F405RGTx'
+
+[build]
+target = "thumbv7em-none-eabi"
+
+[env]
+DEFMT_LOG = "trace"
+
+[unstable]
+build-std-features = ["panic_immediate_abort"]
+build-std = ["core"]
