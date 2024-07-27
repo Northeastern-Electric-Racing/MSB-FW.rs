@@ -1,13 +1,13 @@
 #![no_std]
 #![no_main]
 
-use core::{cell::RefCell, fmt::Write};
+use core::fmt::Write;
+
 use defmt::{info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_stm32::{
     bind_interrupts,
     can::{Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler},
-    dma::NoDma,
     i2c::{self, I2c},
     peripherals::CAN1,
     time::Hertz,
@@ -20,16 +20,14 @@ use embassy_stm32::{
     wdg::IndependentWatchdog,
     Config,
 };
-use embassy_sync::{
-    blocking_mutex::{raw::ThreadModeRawMutex, Mutex},
-    channel::Channel,
-};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Channel, mutex::Mutex};
 use embassy_time::Timer;
 use heapless::String;
 use msb_fw_rs::{can_handler, controllers, readers, DeviceLocation, SharedI2c3};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
+// here are our interrupts.  Embassy is interrupt by default
 bind_interrupts!(struct IrqsCAN {
     CAN1_RX0 => Rx0InterruptHandler<CAN1>;
     CAN1_RX1 => Rx1InterruptHandler<CAN1>;
@@ -46,12 +44,19 @@ bind_interrupts!(struct IrqsI2c {
     I2C3_ER => i2c::ErrorInterruptHandler<peripherals::I2C3>;
 });
 
+// channels are like RTOS queues, with a limit.  They are MPMC easy to pass around in threads.
 static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
 
+// main should be where the peripheral object is used, and then peripherals are init-ed and sent to the threads
+// periph. obj sent to threads should not be mut, they can be edited in threads
+// the loop at the end of main should be to refresh the watchdog
+// put the obj used in the thread immediately before the thread instantiation
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
+    // initialize the project
     let p = embassy_stm32::init(Config::default());
 
+    // create some GPIO on input mode and read from them
     let pin0 = Input::new(p.PC10, Pull::None);
     let addr0 = pin0.get_level() == Level::High;
 
@@ -61,11 +66,15 @@ async fn main(spawner: Spawner) -> ! {
     let pin2 = Input::new(p.PC12, Pull::None);
     let addr2 = pin2.get_level() == Level::High;
 
+    // create our MSB device location from the pin states
     let loc = DeviceLocation::from((addr0, addr1, addr2));
 
+    // create a thread to hold some LEDs and blink them or whatever
     let led1 = Output::new(p.PC4, Level::High, Speed::Low);
     let led2 = Output::new(p.PC5, Level::High, Speed::Low);
     if let Err(err) = spawner.spawn(controllers::control_leds(
+        // note that most types have an internal generic holding the pin or bus itself, this can be removed by degrade
+        // this makes types more generic and should be done for all pins, but is not necessary for multi-bus i2c or whatnot
         led1.degrade(),
         led2.degrade(),
         loc.clone(),
@@ -73,24 +82,28 @@ async fn main(spawner: Spawner) -> ! {
         warn!("Could not spawn CAN task: {}", err);
     }
 
+    // embassy enforces pin mappings to their correct functions for the most at compile time
     let can = Can::new(p.CAN1, p.PA11, p.PA12, IrqsCAN);
+    // pass in a can channel consumer to get the frames from any producer
     if let Err(err) = spawner.spawn(can_handler::can_handler(can, CAN_CHANNEL.receiver(), loc)) {
         warn!("Could not spawn CAN task: {}", err);
     }
 
     // checkout this fuckery, the official way to have two things use one i2c bus
+    // see here: https://github.com/embassy-rs/embassy/blob/main/examples/rp/src/bin/shared_bus.rs
+    // this uses the embassy_embedded_hal extension, which basically converts these wierd ass types to embedded_hal compatable traits
     static I2C_BUS: StaticCell<SharedI2c3> = StaticCell::new();
     let i2c = I2c::new(
         p.I2C3,
         p.PA8,
         p.PC9,
         IrqsI2c,
-        NoDma,
-        NoDma,
+        p.DMA1_CH4, // for must things embassy is DMA by default, allowing for bet use of the async executer.  NoDma can be passed to disable that
+        p.DMA1_CH2,
         Hertz(100_000),
         i2c::Config::default(),
     );
-    let i2c_bus = I2C_BUS.init(Mutex::new(RefCell::new(i2c)));
+    let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
     if let Err(err) = spawner.spawn(readers::temperature_reader(i2c_bus, CAN_CHANNEL.sender())) {
         warn!("Could not spawn CAN task: {}", err);
     }

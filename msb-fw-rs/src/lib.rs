@@ -1,22 +1,17 @@
 #![no_std]
 
-use core::cell::RefCell;
-
-use defmt::unwrap;
 pub mod can_handler;
 pub mod controllers;
 pub mod drivers;
 pub mod readers;
 
-pub type SharedI2c3 = embassy_sync::blocking_mutex::Mutex<
+pub type SharedI2c3 = embassy_sync::mutex::Mutex<
     embassy_sync::blocking_mutex::raw::NoopRawMutex,
-    RefCell<
-        embassy_stm32::i2c::I2c<
-            'static,
-            embassy_stm32::peripherals::I2C3,
-            embassy_stm32::dma::NoDma,
-            embassy_stm32::dma::NoDma,
-        >,
+    embassy_stm32::i2c::I2c<
+        'static,
+        embassy_stm32::peripherals::I2C3,
+        embassy_stm32::peripherals::DMA1_CH4,
+        embassy_stm32::peripherals::DMA1_CH2,
     >,
 >;
 
@@ -53,7 +48,7 @@ impl DeviceLocation {
             embassy_stm32::can::bxcan::Id::Standard(id) => id,
             embassy_stm32::can::bxcan::Id::Extended(id) => id.standard_id(),
         };
-        unwrap!(embassy_stm32::can::bxcan::StandardId::new(match self {
+        defmt::unwrap!(embassy_stm32::can::bxcan::StandardId::new(match self {
             DeviceLocation::FrontLeft => id.as_raw(),
             DeviceLocation::BackLeft => id.as_raw() + 0x40,
             DeviceLocation::BackRight => id.as_raw() + 0x60,

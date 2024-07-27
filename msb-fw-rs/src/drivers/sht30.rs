@@ -1,8 +1,11 @@
 //! Driver for Sensirion SHT3x-DIS digital temperature/humidity sensors
 
+// NOTE: All drivers shoould only ever use embedded hal traits for standardization
+// this makes them eternally portable yet still easy to use from embassy
+// therefore, no import should EVER mention 
+
 use defmt::bitflags;
-use embedded_hal::blocking::delay::DelayMs;
-use embedded_hal::blocking::i2c::{Read, Write, WriteRead};
+use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 
 // 2.2 Timing Specification for the Sensor System
 // Table 4
@@ -18,9 +21,9 @@ pub struct Sht3x<I2C> {
     address: Address,
 }
 
-impl<I2C, E> Sht3x<I2C>
+impl<I2C: I2c, E> Sht3x<I2C>
 where
-    I2C: Read<Error = E> + Write<Error = E> + WriteRead<Error = E>,
+    I2C: I2c<Error = E>,
 {
     /// Creates a new driver.
     pub const fn new(i2c: I2C, address: Address) -> Self {
@@ -28,24 +31,27 @@ where
     }
 
     /// Send an I2C command.
-    fn command<D: DelayMs<u8>>(
+    async fn command<D: DelayNs>(
         &mut self,
         command: Command,
         delay: &mut D,
-        wait_time: Option<u8>,
+        wait_time: Option<u32>,
     ) -> Result<(), Error<E>> {
         let cmd_bytes = command.value().to_be_bytes();
         self.i2c
             .write(self.address as u8, &cmd_bytes)
+            .await
             .map_err(Error::I2c)?;
 
-        delay.delay_ms(wait_time.unwrap_or(0).max(COMMAND_WAIT_TIME_MS));
+        delay
+            .delay_ms(wait_time.unwrap_or(0).max(COMMAND_WAIT_TIME_MS.into()))
+            .await;
 
         Ok(())
     }
 
     /// Take a temperature and humidity measurement.
-    pub fn measure<D: DelayMs<u8>>(
+    pub async fn measure<D: DelayNs>(
         &mut self,
         cs: ClockStretch,
         rpt: Repeatability,
@@ -54,11 +60,13 @@ where
         self.command(
             Command::SingleShot(cs, rpt),
             delay,
-            Some(rpt.max_duration()),
-        )?;
+            Some(rpt.max_duration().into()),
+        )
+        .await?;
         let mut buf = [0; 6];
         self.i2c
             .read(self.address as u8, &mut buf)
+            .await
             .map_err(Error::I2c)?;
 
         let temperature = check_crc([buf[0], buf[1]], buf[2]).map(convert_temperature)?;
@@ -71,16 +79,18 @@ where
     }
 
     /// Soft reset the sensor.
-    pub fn reset<D: DelayMs<u8>>(&mut self, delay: &mut D) -> Result<(), Error<E>> {
-        self.command(Command::SoftReset, delay, Some(SOFT_RESET_TIME_MS))
+    pub async fn reset<D: DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<E>> {
+        self.command(Command::SoftReset, delay, Some(SOFT_RESET_TIME_MS.into()))
+            .await
     }
 
     /// Read the status register.
-    pub fn status<D: DelayMs<u8>>(&mut self, delay: &mut D) -> Result<Status, Error<E>> {
-        self.command(Command::Status, delay, None)?;
+    pub async fn status<D: DelayNs>(&mut self, delay: &mut D) -> Result<Status, Error<E>> {
+        self.command(Command::Status, delay, None).await?;
         let mut buf = [0; 3];
         self.i2c
             .read(self.address as u8, &mut buf)
+            .await
             .map_err(Error::I2c)?;
 
         let status = check_crc([buf[0], buf[1]], buf[2])?;
@@ -88,8 +98,8 @@ where
     }
 
     /// Clear the status register.
-    pub fn clear_status<D: DelayMs<u8>>(&mut self, delay: &mut D) -> Result<(), Error<E>> {
-        self.command(Command::ClearStatus, delay, None)
+    pub async fn clear_status<D: DelayNs>(&mut self, delay: &mut D) -> Result<(), Error<E>> {
+        self.command(Command::ClearStatus, delay, None).await
     }
 }
 

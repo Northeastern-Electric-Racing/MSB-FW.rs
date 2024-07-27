@@ -1,5 +1,5 @@
 use defmt::{unwrap, warn};
-use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_stm32::can::bxcan::{Frame, StandardId};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Sender};
 use embassy_time::{Delay, Timer};
@@ -19,11 +19,14 @@ pub async fn temperature_reader(
 
     loop {
         Timer::after_millis(500).await;
-        let Ok(res) = sht30.measure(
-            sht30::ClockStretch::Disabled,
-            Repeatability::High,
-            &mut Delay,
-        ) else {
+        let Ok(res) = sht30
+            .measure(
+                sht30::ClockStretch::Disabled,
+                Repeatability::High,
+                &mut Delay,
+            )
+            .await
+        else {
             warn!("Could not get temperature");
             continue;
         };
