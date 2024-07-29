@@ -1,8 +1,9 @@
+#![no_std]
 //! Driver for Sensirion SHT3x-DIS digital temperature/humidity sensors
 
 // NOTE: All drivers shoould only ever use embedded hal traits for standardization
 // this makes them eternally portable yet still easy to use from embassy
-// therefore, no import should EVER mention 
+// therefore, no import should EVER mention
 
 use defmt::bitflags;
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};

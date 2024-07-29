@@ -2,7 +2,6 @@
 
 pub mod can_handler;
 pub mod controllers;
-pub mod drivers;
 pub mod readers;
 
 pub type SharedI2c3 = embassy_sync::mutex::Mutex<
