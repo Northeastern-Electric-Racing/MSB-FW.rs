@@ -98,11 +98,13 @@ pub async fn adc1_reader(
         match adc1.read(&mut measurements).await {
             Ok(_) => {
                 adc1.teardown_adc();
+                // TODO transform measurements
             }
             Err(_) => {
                 warn!("DMA overrun");
                 continue;
             }
         }
+        Timer::after_millis(250).await;
     }
 }
