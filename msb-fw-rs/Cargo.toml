@@ -16,6 +16,7 @@ embassy-stm32.workspace = true
 embassy-sync.workspace = true
 embassy-time.workspace = true
 heapless.workspace = true
+lsm6dso-ner = { version = "0.1.0", path = "../crates/lsm6dso-ner" }
 panic-probe.workspace = true
-sht3x = { version = "0.1.0", path = "../crates/sht3x" }
+sht3x-ner = { version = "0.1.0", path = "../crates/sht3x-ner" }
 static_cell.workspace = true

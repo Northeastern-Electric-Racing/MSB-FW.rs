@@ -1,12 +1,12 @@
-use embassy_stm32::gpio::{AnyPin, Output};
+use embassy_stm32::gpio::Output;
 use embassy_time::Timer;
 
 use crate::DeviceLocation;
 
 #[embassy_executor::task]
 pub async fn control_leds(
-    mut led1: Output<'static, AnyPin>,
-    mut led2: Output<'static, AnyPin>,
+    mut led1: Output<'static>,
+    mut led2: Output<'static>,
     device_loc: DeviceLocation,
 ) {
     loop {

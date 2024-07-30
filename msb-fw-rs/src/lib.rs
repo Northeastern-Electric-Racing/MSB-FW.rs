@@ -1,17 +1,13 @@
 #![no_std]
 
+
 pub mod can_handler;
 pub mod controllers;
 pub mod readers;
 
 pub type SharedI2c3 = embassy_sync::mutex::Mutex<
     embassy_sync::blocking_mutex::raw::NoopRawMutex,
-    embassy_stm32::i2c::I2c<
-        'static,
-        embassy_stm32::peripherals::I2C3,
-        embassy_stm32::peripherals::DMA1_CH4,
-        embassy_stm32::peripherals::DMA1_CH2,
-    >,
+    embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async>,
 >;
 
 #[derive(Clone)]
@@ -39,15 +35,12 @@ impl From<(bool, bool, bool)> for DeviceLocation {
 }
 
 impl DeviceLocation {
-    fn get_can_id(
-        &self,
-        base_id: embassy_stm32::can::bxcan::Id,
-    ) -> embassy_stm32::can::bxcan::StandardId {
+    fn get_can_id(&self, base_id: &embassy_stm32::can::Id) -> embassy_stm32::can::StandardId {
         let id = match base_id {
-            embassy_stm32::can::bxcan::Id::Standard(id) => id,
-            embassy_stm32::can::bxcan::Id::Extended(id) => id.standard_id(),
+            embassy_stm32::can::Id::Standard(id) => id,
+            embassy_stm32::can::Id::Extended(id) => &id.standard_id(),
         };
-        defmt::unwrap!(embassy_stm32::can::bxcan::StandardId::new(match self {
+        defmt::unwrap!(embassy_stm32::can::StandardId::new(match self {
             DeviceLocation::FrontLeft => id.as_raw(),
             DeviceLocation::BackLeft => id.as_raw() + 0x40,
             DeviceLocation::BackRight => id.as_raw() + 0x60,

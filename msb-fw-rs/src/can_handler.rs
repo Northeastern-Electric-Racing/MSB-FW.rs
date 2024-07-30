@@ -1,8 +1,5 @@
 use defmt::{trace, unwrap};
-use embassy_stm32::{
-    can::{bxcan::Frame, Can},
-    peripherals::CAN1,
-};
+use embassy_stm32::can::{Can, Frame};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Receiver};
 use embassy_time::Timer;
 
@@ -10,7 +7,7 @@ use crate::DeviceLocation;
 
 #[embassy_executor::task]
 pub async fn can_handler(
-    mut can: Can<'static, CAN1>,
+    mut can: Can<'static>,
     recv: Receiver<'static, ThreadModeRawMutex, Frame, 25>,
     loc: DeviceLocation,
 ) {
@@ -19,7 +16,7 @@ pub async fn can_handler(
 
     loop {
         let frame = recv.receive().await;
-        let frame_fixed = Frame::new_data(loc.get_can_id(frame.id()), *unwrap!(frame.data()));
+        let frame_fixed = unwrap!(Frame::new_data(loc.get_can_id(frame.id()), frame.data()));
         trace!("Sending frame: {}", frame_fixed);
         can.write(&frame_fixed).await;
 

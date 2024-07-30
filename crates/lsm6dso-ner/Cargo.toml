@@ -1,8 +1,10 @@
 [package]
-name = "sht3x"
+name = "lsm6dso-ner"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-defmt.workspace = true
+arrayref = "0.3.8"
 embedded-hal-async.workspace = true
+
+

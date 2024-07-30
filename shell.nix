@@ -9,6 +9,6 @@ mkShell {
     picocom
     udev pkg-config
     probe-rs-tools
-    (rust-bin.fromRustupToolchainFile ./msb-fw-rs/rust-toolchain.toml)
+    (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
   ];
 }

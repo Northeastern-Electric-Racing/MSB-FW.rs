@@ -3,9 +3,11 @@
 
 use core::fmt::Write;
 
+use cortex_m::singleton;
 use defmt::{info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_stm32::{
+    adc::{Adc, SampleTime, Sequence},
     bind_interrupts,
     can::{Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler},
     i2c::{self, I2c},
@@ -13,7 +15,7 @@ use embassy_stm32::{
     time::Hertz,
 };
 use embassy_stm32::{
-    can::bxcan::Frame,
+    can::Frame,
     gpio::{Input, Level, Output, Pull, Speed},
     peripherals,
     usart::{self, Uart},
@@ -54,7 +56,7 @@ static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     // initialize the project
-    let p = embassy_stm32::init(Config::default());
+    let mut p = embassy_stm32::init(Config::default());
 
     // create some GPIO on input mode and read from them
     let pin0 = Input::new(p.PC10, Pull::None);
@@ -75,8 +77,8 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(err) = spawner.spawn(controllers::control_leds(
         // note that most types have an internal generic holding the pin or bus itself, this can be removed by degrade
         // this makes types more generic and should be done for all pins, but is not necessary for multi-bus i2c or whatnot
-        led1.degrade(),
-        led2.degrade(),
+        led1,
+        led2,
         loc.clone(),
     )) {
         warn!("Could not spawn CAN task: {}", err);
@@ -106,6 +108,18 @@ async fn main(spawner: Spawner) -> ! {
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
     if let Err(err) = spawner.spawn(readers::temperature_reader(i2c_bus, CAN_CHANNEL.sender())) {
         warn!("Could not spawn CAN task: {}", err);
+    }
+
+    const ADC_BUF_SIZE: usize = 1024;
+    let adc1 = Adc::new(p.ADC1);
+    let adc_data = singleton!(ADCDAT : [u16; ADC_BUF_SIZE] = [0u16; ADC_BUF_SIZE])
+        .expect("Could not init adc buffer");
+    let mut adc1 = adc1.into_ring_buffered(p.DMA2_CH0, adc_data);
+    adc1.set_sample_sequence(Sequence::One, &mut p.PA0, SampleTime::CYCLES112); // SHOCKPOT
+    adc1.set_sample_sequence(Sequence::Two, &mut p.PA5, SampleTime::CYCLES112); // STRAIN 1
+    adc1.set_sample_sequence(Sequence::Three, &mut p.PA6, SampleTime::CYCLES112); // STRAIN 2
+    if let Err(err) = spawner.spawn(readers::adc1_reader(adc1, CAN_CHANNEL.sender())) {
+        warn!("Could not spawn ADC1 task: {}", err);
     }
 
     let mut usart = Uart::new(
