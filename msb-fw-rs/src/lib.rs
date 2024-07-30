@@ -1,6 +1,5 @@
 #![no_std]
 
-
 pub mod can_handler;
 pub mod controllers;
 pub mod readers;

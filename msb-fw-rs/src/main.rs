@@ -3,7 +3,8 @@
 
 use core::fmt::Write;
 
-use cortex_m::singleton;
+use cortex_m::{peripheral::SCB, singleton};
+use cortex_m_rt::{exception, ExceptionFrame};
 use defmt::{info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_stm32::{
@@ -55,6 +56,7 @@ static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
 // put the obj used in the thread immediately before the thread instantiation
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
+    info!("Initializing MSB-FW...");
     // initialize the project
     let mut p = embassy_stm32::init(Config::default());
 
@@ -143,4 +145,10 @@ async fn main(spawner: Spawner) -> ! {
         Timer::after_secs(3).await;
         watchdog.pet();
     }
+}
+
+
+#[exception]
+unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
+    SCB::sys_reset() // <- you could do something other than reset
 }

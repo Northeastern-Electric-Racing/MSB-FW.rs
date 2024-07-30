@@ -185,9 +185,7 @@ where
         // As float
         let temperature = temperature as f32;
         // Converted given the temperature sensitively value 16 bits per C
-        let temperature = (temperature / 16.0) + 25.0;
-
-        temperature
+        (temperature / 16.0) + 25.0
     }
 
     /// Check if there is new accelerometer data
