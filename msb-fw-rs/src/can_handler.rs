@@ -1,7 +1,6 @@
 use defmt::{trace, unwrap};
 use embassy_stm32::can::{Can, Frame};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Receiver};
-use embassy_time::Timer;
 
 use crate::DeviceLocation;
 
@@ -20,6 +19,6 @@ pub async fn can_handler(
         trace!("Sending frame: {}", frame_fixed);
         can.write(&frame_fixed).await;
 
-        Timer::after_millis(5).await;
+        //Timer::after_millis(5).await;
     }
 }

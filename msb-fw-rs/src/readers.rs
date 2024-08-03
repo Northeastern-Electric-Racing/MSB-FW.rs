@@ -92,13 +92,25 @@ pub async fn adc1_reader(
     mut adc1: RingBufferedAdc<'static, ADC1>,
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
 ) {
-    let mut measurements = [0u16, 120 / 2];
+    let mut measurements: [u16; 60] = [0u16; 120 / 2];
 
     loop {
         match adc1.read(&mut measurements).await {
             Ok(_) => {
                 adc1.teardown_adc();
                 // TODO transform measurements
+                let mut strain_bits: [u8; 4] = [0; 4];
+                strain_bits[0..2].copy_from_slice(&measurements[1].to_be_bytes());
+                strain_bits[2..4].copy_from_slice(&measurements[2].to_be_bytes());
+                can_send
+                    .send(unwrap!(Frame::new_standard(
+                        0x606,
+                        &measurements[0].to_be_bytes()
+                    )))
+                    .await;
+                can_send
+                    .send(unwrap!(Frame::new_standard(0x605, &strain_bits)))
+                    .await;
             }
             Err(_) => {
                 warn!("DMA overrun");

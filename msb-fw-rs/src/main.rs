@@ -112,6 +112,7 @@ async fn main(spawner: Spawner) -> ! {
         warn!("Could not spawn CAN task: {}", err);
     }
 
+    // this pretty much straight from docs, adc dma is very new in embassy stm32 hal
     const ADC_BUF_SIZE: usize = 1024;
     let adc1 = Adc::new(p.ADC1);
     let adc_data = singleton!(ADCDAT : [u16; ADC_BUF_SIZE] = [0u16; ADC_BUF_SIZE])
@@ -146,7 +147,6 @@ async fn main(spawner: Spawner) -> ! {
         watchdog.pet();
     }
 }
-
 
 #[exception]
 unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
