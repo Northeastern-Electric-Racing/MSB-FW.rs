@@ -20,3 +20,4 @@ lsm6dso-ner = { version = "0.1.0", path = "../crates/lsm6dso-ner" }
 panic-probe.workspace = true
 sht3x-ner = { version = "0.1.0", path = "../crates/sht3x-ner" }
 static_cell.workspace = true
+vl6180x-ner = { version = "0.1.0", path = "../crates/vl6180x-ner" }

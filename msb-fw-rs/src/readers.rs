@@ -88,6 +88,31 @@ pub async fn imu_reader(
 }
 
 #[embassy_executor::task]
+pub async fn tof_reader(
+    i2c: &'static SharedI2c3,
+    can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
+) {
+    let i2c_dev = I2cDevice::new(i2c);
+    let Ok(mut vl6180x) = vl6180x_ner::VL6180X::new(i2c_dev).await else {
+        warn!("Could not initialize lsm6dso!");
+        return;
+    };
+
+    loop {
+        let Ok(rng) = vl6180x.poll_range_mm_single_blocking().await else {
+            warn!("Failed to get measurement!");
+            continue;
+        };
+        let range_bits = rng.to_be_bytes();
+        can_send
+            .send(unwrap!(Frame::new_standard(0x607, &range_bits)))
+            .await;
+
+        Timer::after_millis(500).await;
+    }
+}
+
+#[embassy_executor::task]
 pub async fn adc1_reader(
     mut adc1: RingBufferedAdc<'static, ADC1>,
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
