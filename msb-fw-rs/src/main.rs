@@ -31,6 +31,7 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 // here are our interrupts.  Embassy is interrupt by default
+
 bind_interrupts!(struct IrqsCAN {
     CAN1_RX0 => Rx0InterruptHandler<CAN1>;
     CAN1_RX1 => Rx1InterruptHandler<CAN1>;
@@ -52,12 +53,12 @@ static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
 
 // main should be where the peripheral object is used, and then peripherals are init-ed and sent to the threads
 // periph. obj sent to threads should not be mut, they can be edited in threads
-// the loop at the end of main should be to refresh the watchdog
+// the loop at the end of main should be to refresh the watchdog, however main can return if needed
 // put the obj used in the thread immediately before the thread instantiation
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     info!("Initializing MSB-FW...");
-    // initialize the project
+    // initialize the project, ensure we can debug during sleep
     let mut p = embassy_stm32::init(Config::default());
 
     // create some GPIO on input mode and read from them

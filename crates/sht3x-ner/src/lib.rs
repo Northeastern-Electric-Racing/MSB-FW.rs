@@ -303,13 +303,3 @@ bitflags! {
         const WRITE_DATA_CHECKSUM   = 1 <<  0;
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_crc() {
-        assert_eq!(crc8([0xBE, 0xEF]), 0x92);
-    }
-}

@@ -1,14 +1,18 @@
 #![no_std]
 
+// declare all files in this project except main
 pub mod can_handler;
 pub mod controllers;
 pub mod readers;
 
+// include below any shared types or structs across the project
+// make sure to define these in a workspace crate if they are shared across multiple projects
+
+// dont import anything in a lib.rs file, instead use fully resolved definitions
 pub type SharedI2c3 = embassy_sync::mutex::Mutex<
     embassy_sync::blocking_mutex::raw::NoopRawMutex,
     embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async>,
 >;
-
 #[derive(Clone)]
 pub enum DeviceLocation {
     FrontLeft,
