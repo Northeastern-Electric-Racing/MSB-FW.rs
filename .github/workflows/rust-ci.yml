@@ -26,4 +26,4 @@ jobs:
          - name: Clippy
            run: cargo clippy --all-features --workspace
          - name: Format
-           run: cargo fmt --verbose --workspace --check
+           run: cargo fmt --verbose --all --check
