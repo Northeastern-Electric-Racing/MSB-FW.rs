@@ -1,5 +1,5 @@
 [workspace]
-members = ["msb-fw-rs", "crates/*"]
+members = ["msb-fw-rs", "cerberus", "crates/*"]
 resolver = "2"
 
 [workspace.dependencies]

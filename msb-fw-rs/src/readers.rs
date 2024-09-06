@@ -55,6 +55,9 @@ pub async fn imu_reader(
         return;
     };
 
+    let mut accel_bits: [u8; 6] = [0; 6];
+    let mut gyro_bits: [u8; 6] = [0; 6];
+
     loop {
         Timer::after_millis(500).await;
         let Ok(accel) = lsm6dso.read_accelerometer().await else {
@@ -66,7 +69,6 @@ pub async fn imu_reader(
             continue;
         };
 
-        let mut accel_bits: [u8; 6] = [0; 6];
         accel_bits[0..2].copy_from_slice(&(((accel.0 * 1000.0) as i16).to_be_bytes()));
         accel_bits[2..4].copy_from_slice(&(((accel.1 * 1000.0) as i16).to_be_bytes()));
         accel_bits[4..].copy_from_slice(&(((accel.2 * 1000.0) as i16).to_be_bytes()));
@@ -74,7 +76,6 @@ pub async fn imu_reader(
         let accel_frame = Frame::new_data(unwrap!(StandardId::new(0x603)), &accel_bits)
             .expect("Could not create frame");
 
-        let mut gyro_bits: [u8; 6] = [0; 6];
         gyro_bits[0..2].copy_from_slice(&(((gyro.0 * 1000.0) as i16).to_be_bytes()));
         gyro_bits[2..4].copy_from_slice(&(((gyro.1 * 1000.0) as i16).to_be_bytes()));
         gyro_bits[4..].copy_from_slice(&(((gyro.2 * 1000.0) as i16).to_be_bytes()));
@@ -118,13 +119,13 @@ pub async fn adc1_reader(
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
 ) {
     let mut measurements: [u16; 60] = [0u16; 120 / 2];
+    let mut strain_bits: [u8; 4] = [0; 4];
 
     loop {
         match adc1.read(&mut measurements).await {
             Ok(_) => {
                 adc1.teardown_adc();
                 // TODO transform measurements
-                let mut strain_bits: [u8; 4] = [0; 4];
                 strain_bits[0..2].copy_from_slice(&measurements[1].to_be_bytes());
                 strain_bits[2..4].copy_from_slice(&measurements[2].to_be_bytes());
                 can_send
