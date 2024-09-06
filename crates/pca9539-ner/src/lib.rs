@@ -64,7 +64,7 @@ pub struct Pca9539<I2C> {
     address: u8,
 }
 
-/// 
+///
 impl<I2C: I2c, E> Pca9539<I2C>
 where
     I2C: I2c<Error = E>,
