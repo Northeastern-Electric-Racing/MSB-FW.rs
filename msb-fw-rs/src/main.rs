@@ -84,7 +84,7 @@ async fn main(spawner: Spawner) -> ! {
         led2,
         loc.clone(),
     )) {
-        warn!("Could not spawn CAN task: {}", err);
+        warn!("Could not spawn LED task: {}", err);
     }
 
     // embassy enforces pin mappings to their correct functions for the most at compile time

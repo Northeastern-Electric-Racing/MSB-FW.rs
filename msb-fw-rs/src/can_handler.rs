@@ -10,7 +10,7 @@ pub async fn can_handler(
     recv: Receiver<'static, ThreadModeRawMutex, Frame, 25>,
     loc: DeviceLocation,
 ) {
-    can.set_bitrate(1_000_000);
+    can.set_bitrate(500_000);
     can.enable().await;
 
     loop {

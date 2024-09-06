@@ -1,0 +1,10 @@
+[package]
+name = "pca9539-ner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-hal-async.workspace = true
+embedded-hal.workspace = true
+bit_field = "0.10.2"
+num_enum = { version = "0.7.3", default-features = false }
