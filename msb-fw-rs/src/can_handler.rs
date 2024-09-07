@@ -4,13 +4,16 @@ use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Receiver};
 
 use crate::DeviceLocation;
 
+const CAN_BITRATE: u32 = 500_000;
+
+
 #[embassy_executor::task]
 pub async fn can_handler(
     mut can: Can<'static>,
     recv: Receiver<'static, ThreadModeRawMutex, Frame, 25>,
     loc: DeviceLocation,
 ) {
-    can.set_bitrate(500_000);
+    can.set_bitrate(CAN_BITRATE);
     can.enable().await;
 
     loop {

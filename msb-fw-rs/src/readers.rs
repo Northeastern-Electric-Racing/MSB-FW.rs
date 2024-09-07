@@ -6,10 +6,13 @@ use embassy_stm32::{
     peripherals::ADC1,
 };
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Sender};
-use embassy_time::{Delay, Timer};
+use embassy_time::{Delay, Duration, Timer};
 use sht3x_ner::Repeatability;
 
 use crate::SharedI2c3;
+
+const TEMPERATURE_REFRESH_TIME: Duration = Duration::from_millis(500);
+const TEMPERATURE_SEND_MSG_ID: StandardId = StandardId::new(0x602).expect("Could not parse ID");
 
 #[embassy_executor::task]
 pub async fn temperature_reader(
@@ -20,7 +23,7 @@ pub async fn temperature_reader(
     let mut sht30 = sht3x_ner::Sht3x::new(i2c_dev, sht3x_ner::Address::High);
 
     loop {
-        Timer::after_millis(500).await;
+        Timer::after(TEMPERATURE_REFRESH_TIME).await;
         let Ok(res) = sht30
             .measure(
                 sht3x_ner::ClockStretch::Disabled,
@@ -38,11 +41,16 @@ pub async fn temperature_reader(
         bits[..2].copy_from_slice(&temp);
         bits[2..].copy_from_slice(&humidity);
 
-        let frame = Frame::new_data(unwrap!(StandardId::new(0x602)), &bits)
-            .expect("Could not create frame");
+        let frame =
+            Frame::new_data(TEMPERATURE_SEND_MSG_ID, &bits).expect("Could not create frame");
         can_send.send(frame).await;
     }
 }
+
+const LSM6DSO_ADDR: u8 = 0x6A;
+const IMU_REFRESH_TIME: Duration = Duration::from_millis(500);
+const IMU_SEND_MSG_ID: StandardId = StandardId::new(0x603).expect("Could not parse ID");
+const GYRO_SEND_MSG_ID: StandardId = StandardId::new(0x604).expect("Could not parse ID");
 
 #[embassy_executor::task]
 pub async fn imu_reader(
@@ -50,7 +58,7 @@ pub async fn imu_reader(
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
 ) {
     let i2c_dev = I2cDevice::new(i2c);
-    let Ok(mut lsm6dso) = lsm6dso_ner::Lsm6dso::new(i2c_dev, 0x6A).await else {
+    let Ok(mut lsm6dso) = lsm6dso_ner::Lsm6dso::new(i2c_dev, LSM6DSO_ADDR).await else {
         warn!("Could not initialize lsm6dso!");
         return;
     };
@@ -59,7 +67,7 @@ pub async fn imu_reader(
     let mut gyro_bits: [u8; 6] = [0; 6];
 
     loop {
-        Timer::after_millis(500).await;
+        Timer::after(IMU_REFRESH_TIME).await;
         let Ok(accel) = lsm6dso.read_accelerometer().await else {
             warn!("Could not read lsm6dso accel");
             continue;
@@ -73,20 +81,23 @@ pub async fn imu_reader(
         accel_bits[2..4].copy_from_slice(&(((accel.1 * 1000.0) as i16).to_be_bytes()));
         accel_bits[4..].copy_from_slice(&(((accel.2 * 1000.0) as i16).to_be_bytes()));
 
-        let accel_frame = Frame::new_data(unwrap!(StandardId::new(0x603)), &accel_bits)
-            .expect("Could not create frame");
+        let accel_frame =
+            Frame::new_data(IMU_SEND_MSG_ID, &accel_bits).expect("Could not create frame");
 
         gyro_bits[0..2].copy_from_slice(&(((gyro.0 * 1000.0) as i16).to_be_bytes()));
         gyro_bits[2..4].copy_from_slice(&(((gyro.1 * 1000.0) as i16).to_be_bytes()));
         gyro_bits[4..].copy_from_slice(&(((gyro.2 * 1000.0) as i16).to_be_bytes()));
 
-        let gyro_frame = Frame::new_data(unwrap!(StandardId::new(0x604)), &gyro_bits)
-            .expect("Could not create frame");
+        let gyro_frame =
+            Frame::new_data(GYRO_SEND_MSG_ID, &gyro_bits).expect("Could not create frame");
 
         can_send.send(accel_frame).await;
         can_send.send(gyro_frame).await;
     }
 }
+
+const TOF_REFRESH_TIME: Duration = Duration::from_millis(500);
+const TOF_SEND_MSG_ID: StandardId = StandardId::new(0x607).expect("Could not parse ID");
 
 #[embassy_executor::task]
 pub async fn tof_reader(
@@ -106,12 +117,16 @@ pub async fn tof_reader(
         };
         let range_bits = rng.to_be_bytes();
         can_send
-            .send(unwrap!(Frame::new_standard(0x607, &range_bits)))
+            .send(unwrap!(Frame::new_data(TOF_SEND_MSG_ID, &range_bits)))
             .await;
 
-        Timer::after_millis(500).await;
+        Timer::after(TOF_REFRESH_TIME).await;
     }
 }
+
+const ADC_REFRESH_TIME: Duration = Duration::from_millis(250);
+const STRAIN_SEND_MSG_ID: StandardId = StandardId::new(0x606).expect("Could not parse ID");
+const SHOCKPOT_SEND_MSG_ID: StandardId = StandardId::new(0x605).expect("Could not parse ID");
 
 #[embassy_executor::task]
 pub async fn adc1_reader(
@@ -129,13 +144,13 @@ pub async fn adc1_reader(
                 strain_bits[0..2].copy_from_slice(&measurements[1].to_be_bytes());
                 strain_bits[2..4].copy_from_slice(&measurements[2].to_be_bytes());
                 can_send
-                    .send(unwrap!(Frame::new_standard(
-                        0x606,
+                    .send(unwrap!(Frame::new_data(
+                        STRAIN_SEND_MSG_ID,
                         &measurements[0].to_be_bytes()
                     )))
                     .await;
                 can_send
-                    .send(unwrap!(Frame::new_standard(0x605, &strain_bits)))
+                    .send(unwrap!(Frame::new_data(SHOCKPOT_SEND_MSG_ID, &strain_bits)))
                     .await;
             }
             Err(_) => {
@@ -143,6 +158,6 @@ pub async fn adc1_reader(
                 continue;
             }
         }
-        Timer::after_millis(250).await;
+        Timer::after(ADC_REFRESH_TIME).await;
     }
 }

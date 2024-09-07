@@ -1,7 +1,9 @@
 use embassy_stm32::gpio::Output;
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 
 use crate::DeviceLocation;
+
+const LED_REFRESH_TIME: Duration = Duration::from_secs(2);
 
 #[embassy_executor::task]
 pub async fn control_leds(
@@ -10,7 +12,7 @@ pub async fn control_leds(
     device_loc: DeviceLocation,
 ) {
     loop {
-        Timer::after_secs(2).await;
+        Timer::after(LED_REFRESH_TIME).await;
         match device_loc {
             DeviceLocation::FrontLeft => {
                 led1.set_high();

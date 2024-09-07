@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(const_option)]
+#![feature(impl_trait_in_assoc_type)]
 
 pub mod bms;
 pub mod can_handler;

@@ -1,4 +1,6 @@
 #![no_std]
+#![feature(impl_trait_in_assoc_type)]
+#![feature(const_option)]
 
 // declare all files in this project except main
 pub mod can_handler;
