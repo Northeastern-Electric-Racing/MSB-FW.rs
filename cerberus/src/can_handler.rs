@@ -35,7 +35,9 @@ pub async fn can_handler(
         match select(recv.receive(), can.read()).await {
             select::Either::First(frame) => {
                 trace!("Sending frame: {}", frame);
-                can.write(&frame).await;
+                if let Some(_) = can.write(&frame).await.dequeued_frame() {
+                    warn!("Dequeing can frames!");
+                }
             }
             select::Either::Second(res) => match res {
                 Ok(got) => match got.frame.header().id() {

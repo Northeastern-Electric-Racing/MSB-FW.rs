@@ -1,7 +1,5 @@
 #![no_std]
-use bit_field::BitField;
 use embedded_hal_async::i2c::I2c;
-use num_enum::TryFromPrimitive;
 
 /// Defines errors
 #[derive(Debug, Copy, Clone)]
@@ -16,26 +14,26 @@ impl<E> From<E> for Error<E> {
     }
 }
 
-/// Pin modes.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Direction {
-    /// Represents input mode.
-    Input = 1,
-    /// Represents output mode.
-    Output = 0,
-}
+// /// Pin modes.
+// #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+// pub enum Direction {
+//     /// Represents input mode.
+//     Input = 1,
+//     /// Represents output mode.
+//     Output = 0,
+// }
 
-/// Pin levels.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Level {
-    /// High level
-    High = 1,
-    /// Low level
-    Low = 0,
-}
+// /// Pin levels.
+// #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+// pub enum Level {
+//     /// High level
+//     High = 1,
+//     /// Low level
+//     Low = 0,
+// }
 
 /// Pin names
-#[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum Pin {
     #[default]
@@ -47,14 +45,26 @@ pub enum Pin {
     P05 = 5,
     P06 = 6,
     P07 = 7,
-    P10 = 8,
-    P11 = 9,
-    P12 = 10,
-    P13 = 11,
-    P14 = 12,
-    P15 = 13,
-    P16 = 14,
-    P17 = 15,
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(u8)]
+pub enum Bank {
+    Bank0 = 0,
+    Bank1 = 1,
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(u8)]
+pub enum RegisterType {
+    /// 1 = high
+    InputLevel = 0,
+    /// 1 = high, default 1
+    OutputLevel = 2,
+    /// 1 = inverted, default 0
+    PolarityInverted = 4,
+    /// 1 = input, default 1
+    Direction = 6,
 }
 
 /// PCA9539/TCA9539 is a 16-pin I2C I/O Expander with I2C Interface.
@@ -86,6 +96,8 @@ where
         self.address
     }
 
+    // base functions
+
     /// Read an 8 bit register
     pub async fn read(&mut self, addr: u8) -> Result<u8, E> {
         let mut data = [0u8];
@@ -100,32 +112,38 @@ where
         self.i2c.write(self.address, &[addr, data]).await
     }
 
-    /// Get a single bit in a register
-    pub async fn bit(&mut self, addr: u8, bit: usize) -> Result<bool, E> {
-        let data = self.read(addr).await?;
-        Ok(data.get_bit(bit))
+    // register abstractions
+
+    pub async fn write_register(
+        &mut self,
+        reg: RegisterType,
+        bank: Bank,
+        data: u8,
+    ) -> Result<(), E> {
+        self.write(reg as u8 + bank as u8, data).await
     }
 
-    /// Set a single bit in a register
-    pub async fn set_bit(&mut self, addr: u8, bit: usize, value: bool) -> Result<(), E> {
-        let mut data = self.read(addr).await?;
-        data.set_bit(bit, value);
-        self.write(addr, data).await
+    pub async fn read_register(&mut self, reg: RegisterType, bank: Bank) -> Result<u8, E> {
+        self.read(reg as u8 + bank as u8).await
     }
 
-    pub async fn set_level(&mut self, pin: Pin, level: Level) -> Result<(), E> {
-        let pin = pin as u8;
-        self.set_bit(0x02 | (pin >> 3), pin as usize & 7, level == Level::High)
-            .await
+    // helper functions
+
+    pub async fn write_pin(
+        &mut self,
+        reg: RegisterType,
+        bank: Bank,
+        pin: Pin,
+        state: bool,
+    ) -> Result<(), E> {
+        let old_state = self.read_register(reg, bank).await?;
+        let new_state = (old_state & !(1u8 << pin as u8)) | ((state as u8) << pin as u8);
+
+        self.write_register(reg, bank, new_state).await
     }
 
-    pub async fn set_direction(&mut self, pin: Pin, direction: Direction) -> Result<(), E> {
-        let pin = pin as u8;
-        self.set_bit(
-            0x06 | (pin >> 3),
-            pin as usize & 7,
-            direction == Direction::Input,
-        )
-        .await
+    pub async fn read_pin(&mut self, reg: RegisterType, bank: Bank, pin: Pin) -> Result<bool, E> {
+        let data = self.read_register(reg, bank).await?;
+        Ok((data & (1 << pin as u32)) > 0)
     }
 }

@@ -17,4 +17,5 @@ embassy-futures.workspace = true
 heapless.workspace = true
 panic-probe.workspace = true
 static_cell.workspace = true
+bitfield.workspace = true
 pca9539-ner = { version = "0.1.0", path = "../crates/pca9539-ner" }

@@ -1,4 +1,4 @@
-use defmt::{trace, unwrap};
+use defmt::{trace, unwrap, warn};
 use embassy_stm32::can::{Can, Frame};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel::Receiver};
 
@@ -17,7 +17,9 @@ pub async fn can_handler(
         let frame = recv.receive().await;
         let frame_fixed = unwrap!(Frame::new_data(loc.get_can_id(frame.id()), frame.data()));
         trace!("Sending frame: {}", frame_fixed);
-        can.write(&frame_fixed).await;
+        if let Some(_) = can.write(&frame_fixed).await.dequeued_frame() {
+            warn!("Dequeing can frames!");
+        }
 
         //Timer::after_millis(5).await;
     }

@@ -1,9 +1,15 @@
 #![no_std]
 #![no_main]
 
-use core::fmt::Write;
+use core::{
+    fmt::Write,
+    sync::atomic::{AtomicBool, AtomicI32, AtomicU32},
+};
 
-use cerberus::{bms, can_handler, fault, FaultCode, SharedI2c, StateTransition};
+use cerberus::{
+    bms, can_handler, dti, fault, monitor, state_machine, FaultCode, PduCommand, SharedI2c,
+    StateTransition,
+};
 use cortex_m::{peripheral::SCB, singleton};
 use cortex_m_rt::{exception, ExceptionFrame};
 use defmt::{info, unwrap, warn};
@@ -12,6 +18,7 @@ use embassy_stm32::{
     adc::{Adc, SampleTime, Sequence},
     bind_interrupts,
     can::{Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler},
+    exti::ExtiInput,
     i2c::{self, I2c},
     peripherals::CAN1,
     time::Hertz,
@@ -57,9 +64,17 @@ bind_interrupts!(struct IrqsI2c2 {
 });
 
 static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
+static PDU_COMMAND: Channel<ThreadModeRawMutex, PduCommand, 10> = Channel::new();
 
 static CURRENT_STATE: Signal<CriticalSectionRawMutex, StateTransition> = Signal::new();
 static FAULT: Signal<CriticalSectionRawMutex, FaultCode> = Signal::new();
+
+// true=TS ON
+static TSMS_SENSE: AtomicBool = AtomicBool::new(false);
+// true=brakes engaged
+static BRAKE_STATE: AtomicBool = AtomicBool::new(false);
+
+static DTI_MPH: AtomicI32 = AtomicI32::new(0);
 
 static BMS_CALLBACK: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
 static DTI_CALLBACK: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
@@ -83,8 +98,15 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(err) = spawner.spawn(bms::bms_handler(&BMS_CALLBACK, &FAULT)) {
         warn!("Could not spawn BMS task: {}", err);
     }
+    if let Err(err) = spawner.spawn(dti::dti_handler(&DTI_CALLBACK, &DTI_MPH)) {
+        warn!("Could not spawn DTI task: {}", err);
+    }
 
-    if let Err(err) = spawner.spawn(fault::fault_handler(CAN_CHANNEL.sender(), &FAULT)) {
+    if let Err(err) = spawner.spawn(fault::fault_handler(
+        CAN_CHANNEL.sender(),
+        &FAULT,
+        &CURRENT_STATE,
+    )) {
         warn!("Could not spawn fault task: {}", err);
     }
 
@@ -113,23 +135,56 @@ async fn main(spawner: Spawner) -> ! {
         i2c::Config::default(),
     );
     let i2c_bus_2 = I2C_BUS_2.init(Mutex::new(i2c_2));
+    if let Err(err) = spawner.spawn(monitor::ctrl_expander_handler(
+        CAN_CHANNEL.sender(),
+        PDU_COMMAND.receiver(),
+        i2c_bus_2,
+        &TSMS_SENSE,
+    )) {
+        warn!("Could not spawn ctrl expander task: {}", err);
+    }
 
-    const ADC_BUF_SIZE: usize = 1024;
-
+    const ADC1_BUF_SIZE: usize = 40;
     let adc1 = Adc::new(p.ADC1);
-    let adc_data_1 = singleton!(ADCDAT : [u16; ADC_BUF_SIZE] = [0u16; ADC_BUF_SIZE])
+    let adc_data_1 = singleton!(ADCDAT : [u16; ADC1_BUF_SIZE] = [0u16; ADC1_BUF_SIZE])
         .expect("Could not init adc buffer");
     let mut adc1 = adc1.into_ring_buffered(p.DMA2_CH4, adc_data_1);
-    adc1.set_sample_sequence(Sequence::One, &mut p.PB0, SampleTime::CYCLES112); //
+    adc1.set_sample_sequence(Sequence::One, &mut p.PB0, SampleTime::CYCLES112); // LV sense
+    if let Err(err) = spawner.spawn(monitor::lv_sense_handler(adc1, CAN_CHANNEL.sender())) {
+        warn!("Could not spawn LV sense task: {}", err);
+    }
 
+    const ADC3_BUF_SIZE: usize = 120;
     let adc3 = Adc::new(p.ADC3);
-    let adc_data_3 = singleton!(ADCDAT : [u16; ADC_BUF_SIZE] = [0u16; ADC_BUF_SIZE])
+    let adc_data_3 = singleton!(ADCDAT : [u16; ADC3_BUF_SIZE] = [0u16; ADC3_BUF_SIZE])
         .expect("Could not init adc buffer");
     let mut adc3 = adc3.into_ring_buffered(p.DMA2_CH0, adc_data_3);
     adc3.set_sample_sequence(Sequence::One, &mut p.PA0, SampleTime::CYCLES112); //
     adc3.set_sample_sequence(Sequence::One, &mut p.PA1, SampleTime::CYCLES112); //
     adc3.set_sample_sequence(Sequence::One, &mut p.PA2, SampleTime::CYCLES112); //
     adc3.set_sample_sequence(Sequence::One, &mut p.PA3, SampleTime::CYCLES112); //
+
+    let button1 = ExtiInput::new(p.PA4, p.EXTI4, embassy_stm32::gpio::Pull::Up);
+    let button2 = ExtiInput::new(p.PA5, p.EXTI5, embassy_stm32::gpio::Pull::Up);
+    let button3 = ExtiInput::new(p.PA6, p.EXTI6, embassy_stm32::gpio::Pull::Up);
+    let button4 = ExtiInput::new(p.PA7, p.EXTI7, embassy_stm32::gpio::Pull::Up);
+    //let button5 = ExtiInput::new(p.PC4, p.EXTI4, embassy_stm32::gpio::Pull::Up);
+    //let button6 = ExtiInput::new(p.PC5, p.EXTI5, embassy_stm32::gpio::Pull::Up);
+    let button7 = ExtiInput::new(p.PB0, p.EXTI0, embassy_stm32::gpio::Pull::Up);
+    let button8 = ExtiInput::new(p.PB1, p.EXTI1, embassy_stm32::gpio::Pull::Up);
+    if let Err(err) = spawner.spawn(monitor::steeringio_handler(
+        CAN_CHANNEL.sender(),
+        button1,
+        button2,
+        button3,
+        button4,
+        // button5,
+        // button6,
+        button7,
+        button8,
+    )) {
+        warn!("Could not spawn steeringIO task: {}", err);
+    }
 
     let mut usart = Uart::new(
         p.USART3,
@@ -144,6 +199,16 @@ async fn main(spawner: Spawner) -> ! {
     let mut s: String<128> = String::new();
     core::write!(&mut s, "Hello DMA World!\r\n",).unwrap();
     unwrap!(usart.write(s.as_bytes()).await);
+
+    if let Err(err) = spawner.spawn(state_machine::state_handler(
+        &CURRENT_STATE,
+        PDU_COMMAND.sender(),
+        &DTI_MPH,
+        &BRAKE_STATE,
+        &TSMS_SENSE,
+    )) {
+        warn!("Could not spawn BMS task: {}", err);
+    }
 
     let mut watchdog = IndependentWatchdog::new(p.IWDG, 4000000);
     watchdog.unleash();

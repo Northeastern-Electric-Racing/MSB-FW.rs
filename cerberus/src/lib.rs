@@ -2,14 +2,17 @@
 
 pub mod bms;
 pub mod can_handler;
+pub mod dti;
 pub mod fault;
+pub mod monitor;
+pub mod state_machine;
 
 pub type SharedI2c = embassy_sync::mutex::Mutex<
     embassy_sync::blocking_mutex::raw::NoopRawMutex,
     embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async>,
 >;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FunctionalType {
     READY,
     /* F means functional */
@@ -39,6 +42,7 @@ pub enum StateTransition {
 // TODO: this is a breaking change and is also ugly and non-exhuastive in terms of IDs
 // However it is centralized which is better than the C impl
 
+#[repr(u8)]
 pub enum FaultSeverity {
     Defcon1 = 1,
     Defcon2 = 2,
@@ -60,4 +64,11 @@ impl FaultCode {
             FaultCode::BmsCanMonitorFault => FaultSeverity::Defcon4,
         }
     }
+}
+
+pub enum PduCommand {
+    WritePump(bool),
+    WriteBrakelight(bool),
+    WriteFault(bool),
+    SoundRtds,
 }
