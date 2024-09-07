@@ -10,6 +10,7 @@ use embassy_sync::{
 use crate::{FunctionalType, NeroType, PduCommand, StateTransition};
 
 #[embassy_executor::task]
+/// Handles the state (via PDU outputs) using a variety of inputs
 pub async fn state_handler(
     state_recv: &'static Signal<CriticalSectionRawMutex, StateTransition>,
     pdu_cmd_send: Sender<'static, ThreadModeRawMutex, PduCommand, 10>,

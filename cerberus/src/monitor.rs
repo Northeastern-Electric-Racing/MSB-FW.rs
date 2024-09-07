@@ -14,12 +14,16 @@ use embassy_sync::{
     blocking_mutex::raw::ThreadModeRawMutex,
     channel::{Receiver, Sender},
 };
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use pca9539_ner::{Pca9539, Pin};
 
 use crate::{PduCommand, SharedI2c};
 
+const LV_SENSE_MSG_ID: StandardId = StandardId::new(0x503).expect("Cannot parse ID");
+const LV_SENSE_REFRESH_TIME: Duration = Duration::from_millis(750);
+
 #[embassy_executor::task]
+/// Read and send LV sense
 pub async fn lv_sense_handler(
     mut adc1: RingBufferedAdc<'static, ADC1>,
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
@@ -30,10 +34,14 @@ pub async fn lv_sense_handler(
         match adc1.read(&mut measurements).await {
             Ok(_) => {
                 adc1.teardown_adc();
+                // 8.97 is mahic no. bc nobody remembers the exact resistor config
                 let v_in = (measurements[0] as f32 * 8.967 * 10f32) as u32;
                 // TODO transform measurements
                 can_send
-                    .send(unwrap!(Frame::new_standard(0x503, &v_in.to_be_bytes())))
+                    .send(unwrap!(Frame::new_data(
+                        LV_SENSE_MSG_ID,
+                        &v_in.to_be_bytes()
+                    )))
                     .await;
             }
             Err(_) => {
@@ -41,11 +49,20 @@ pub async fn lv_sense_handler(
                 continue;
             }
         }
-        Timer::after_millis(750).await;
+        Timer::after(LV_SENSE_REFRESH_TIME).await;
     }
 }
 
+const RTDS_SOUND_TIME: Duration = Duration::from_millis(1750);
+const CTRL_EXPANDER_I2C_ADDR: u8 = 0x76;
+
+/// also queries RTDS state, so RTDS_SOUND_TIME accuracy is +/- TSMS_REFRESH_TIME
+const TSMS_REFRESH_TIME: Duration = Duration::from_millis(100);
+const FUSE_REFRESH_TIME: Duration = Duration::from_millis(800);
+
 #[embassy_executor::task]
+/// Controls all ctrl expander functionality
+/// Can be commanded via the pdu channel, will also send CAN msgs for fuses and update TSMS state
 pub async fn ctrl_expander_handler(
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
     pdu_recv: Receiver<'static, ThreadModeRawMutex, PduCommand, 10>,
@@ -53,8 +70,9 @@ pub async fn ctrl_expander_handler(
     ts_state_send: &'static AtomicBool,
 ) {
     let i2c_dev = I2cDevice::new(ctrl_expand_i2c);
-    let mut pca9539 = Pca9539::new(i2c_dev, 0x76).unwrap();
+    let mut pca9539 = Pca9539::new(i2c_dev, CTRL_EXPANDER_I2C_ADDR).unwrap();
 
+    // initial setup
     unwrap!(
         pca9539
             .write_register(
@@ -100,18 +118,14 @@ pub async fn ctrl_expander_handler(
     let mut active_sounding = false;
     let mut rtds_sound_start = Instant::now();
 
+    let mut tsms_ticker = Ticker::every(TSMS_REFRESH_TIME);
+    let mut fuse_ticker = Ticker::every(FUSE_REFRESH_TIME);
+
     loop {
-        match select3(
-            Timer::after_millis(100),
-            Timer::after_millis(800),
-            pdu_recv.receive(),
-        )
-        .await
-        {
+        match select3(tsms_ticker.next(), fuse_ticker.next(), pdu_recv.receive()).await {
             select::Either3::First(_) => {
-                if active_sounding
-                    && Instant::now() - rtds_sound_start > Duration::from_millis(1750)
-                {
+                // end RTDS sound if time is up
+                if active_sounding && Instant::now() - rtds_sound_start > RTDS_SOUND_TIME {
                     unwrap!(
                         pca9539
                             .write_pin(
@@ -178,15 +192,15 @@ pub async fn ctrl_expander_handler(
                 send_data_1 = send_data_1.reverse_bits();
                 send_data_2 = send_data_2.reverse_bits();
 
-                let mut send_data: [u8; 2] = [0u8; 2];
+                let mut send_data_bits: [u8; 2] = [0u8; 2];
 
-                send_data[0..1].copy_from_slice(&send_data_1.to_be_bytes());
-                send_data[1..2].copy_from_slice(&send_data_2.to_be_bytes());
+                send_data_bits[0..1].copy_from_slice(&send_data_1.to_be_bytes());
+                send_data_bits[1..2].copy_from_slice(&send_data_2.to_be_bytes());
 
                 can_send
                     .send(unwrap!(Frame::new_data(
                         unwrap!(StandardId::new(0x111)),
-                        &send_data
+                        &send_data_bits
                     )))
                     .await;
             }
@@ -257,7 +271,7 @@ pub async fn steeringio_handler(
         ])
         .await;
 
-        let buttonValue = match ans.1 {
+        let button_value = match ans.1 {
             0 => button1.get_level(),
             1 => button2.get_level(),
             2 => button3.get_level(),

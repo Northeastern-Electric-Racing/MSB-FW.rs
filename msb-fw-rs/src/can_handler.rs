@@ -17,7 +17,7 @@ pub async fn can_handler(
         let frame = recv.receive().await;
         let frame_fixed = unwrap!(Frame::new_data(loc.get_can_id(frame.id()), frame.data()));
         trace!("Sending frame: {}", frame_fixed);
-        if let Some(_) = can.write(&frame_fixed).await.dequeued_frame() {
+        if can.write(&frame_fixed).await.dequeued_frame().is_some() {
             warn!("Dequeing can frames!");
         }
 

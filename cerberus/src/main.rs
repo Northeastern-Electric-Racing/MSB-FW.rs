@@ -3,7 +3,7 @@
 
 use core::{
     fmt::Write,
-    sync::atomic::{AtomicBool, AtomicI32, AtomicU32},
+    sync::atomic::{AtomicBool, AtomicI32},
 };
 
 use cerberus::{
@@ -63,11 +63,20 @@ bind_interrupts!(struct IrqsI2c2 {
     I2C2_ER => i2c::ErrorInterruptHandler<peripherals::I2C2>;
 });
 
+// channels to pass info with backpressure
 static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
 static PDU_COMMAND: Channel<ThreadModeRawMutex, PduCommand, 10> = Channel::new();
 
+// signals for most up to date state only
+
 static CURRENT_STATE: Signal<CriticalSectionRawMutex, StateTransition> = Signal::new();
 static FAULT: Signal<CriticalSectionRawMutex, FaultCode> = Signal::new();
+
+// callbacks for CAN messages
+static BMS_CALLBACK: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
+static DTI_CALLBACK: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
+
+// state that is checked periodically rather than awaited
 
 // true=TS ON
 static TSMS_SENSE: AtomicBool = AtomicBool::new(false);
@@ -75,9 +84,6 @@ static TSMS_SENSE: AtomicBool = AtomicBool::new(false);
 static BRAKE_STATE: AtomicBool = AtomicBool::new(false);
 
 static DTI_MPH: AtomicI32 = AtomicI32::new(0);
-
-static BMS_CALLBACK: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
-static DTI_CALLBACK: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {

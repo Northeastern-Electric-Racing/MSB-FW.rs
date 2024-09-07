@@ -5,16 +5,21 @@ use embassy_time::Timer;
 
 use crate::FaultCode;
 
+/// time from no BMS DCL message until Cerberus will fault
+const BMS_WATCHDOG_FAULT_TIME: u64 = 4;
+
 #[embassy_executor::task]
+/// triggers a fault if a BMS message is not received for 4 seconds
+/// Takes in the BMS signal and sends out a fault signal
 pub async fn bms_handler(
-    recved: &'static Signal<CriticalSectionRawMutex, Frame>,
-    fault: &'static Signal<CriticalSectionRawMutex, FaultCode>,
+    bms_recv: &'static Signal<CriticalSectionRawMutex, Frame>,
+    fault_send: &'static Signal<CriticalSectionRawMutex, FaultCode>,
 ) {
     loop {
-        match select(recved.wait(), Timer::after_secs(4)).await {
+        match select(bms_recv.wait(), Timer::after_secs(BMS_WATCHDOG_FAULT_TIME)).await {
             embassy_futures::select::Either::First(_) => continue,
             embassy_futures::select::Either::Second(_) => {
-                fault.signal(FaultCode::BmsCanMonitorFault)
+                fault_send.signal(FaultCode::BmsCanMonitorFault)
             }
         }
     }

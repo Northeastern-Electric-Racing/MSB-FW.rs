@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(const_option)]
 
 pub mod bms;
 pub mod can_handler;

@@ -1,16 +1,26 @@
 use defmt::{debug, unwrap, warn};
-use embassy_futures::select::select;
+use embassy_futures::select::select3;
 use embassy_stm32::can::{Frame, StandardId};
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex},
     channel::Sender,
     signal::Signal,
 };
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Ticker};
 
-use crate::{FaultCode, FaultSeverity, FunctionalType, StateTransition};
+use crate::{FaultCode, FunctionalType, StateTransition};
+
+const STATUS_MSG_ID: StandardId = StandardId::new(0x502).expect("Cannot parse ID");
+
+/// time at which to unfault the car if the faulting condition has cleared
+const UNFAULT_TIME: Duration = Duration::from_secs(5);
+
+/// refresh time for sending fault status message
+const SEND_STATUS_MSG_TIME: Duration = Duration::from_millis(200);
 
 #[embassy_executor::task]
+/// Receives a fault, then sends it out via CAN and tells the state machine
+/// Includes automatic unfaulting
 pub async fn fault_handler(
     can_send: Sender<'static, ThreadModeRawMutex, Frame, 25>,
     fault: &'static Signal<CriticalSectionRawMutex, FaultCode>,
@@ -18,33 +28,43 @@ pub async fn fault_handler(
 ) {
     let mut last_fault = FaultCode::FaultsClear;
 
-    let status_id: StandardId = unwrap!(StandardId::new(0x502));
-
     let mut fault_bits: [u8; 5] = [0u8; 5];
 
-    let mut last_fault_time = Instant::now();
+    let mut fault_cansend_ticker = Ticker::every(SEND_STATUS_MSG_TIME);
+
+    let mut unfault_ticker = Ticker::every(UNFAULT_TIME);
 
     loop {
-        last_fault = match select(fault.wait(), Timer::after_millis(250)).await {
-            embassy_futures::select::Either::First(event) => {
-                match event.get_severity() {
+        // TODO figure out the expiry paradox here
+        last_fault = match select3(
+            fault.wait(),
+            fault_cansend_ticker.next(),
+            unfault_ticker.next(),
+        )
+        .await
+        {
+            embassy_futures::select::Either3::First(new_fault) => {
+                match new_fault.get_severity() {
                     crate::FaultSeverity::Defcon1
                     | crate::FaultSeverity::Defcon2
                     | crate::FaultSeverity::Defcon3 => {
                         state_send.signal(StateTransition::Functional(FunctionalType::FAULTED));
-                        last_fault_time = Instant::now();
+                        // restart the countdown to unfault
+                        unfault_ticker.reset();
                     }
                     crate::FaultSeverity::Defcon4 => warn!("Non critical fault!"),
                     crate::FaultSeverity::Defcon5 => debug!("Faults clear!"),
                 }
-                event
+                new_fault
             }
-            embassy_futures::select::Either::Second(_) => {
-                if last_fault.get_severity() as u8 <= FaultSeverity::Defcon3 as u8
-                    && Instant::now() - last_fault_time > Duration::from_secs(5)
-                {
-                    state_send.signal(StateTransition::Functional(FunctionalType::READY))
-                }
+            embassy_futures::select::Either3::Second(_) =>
+            // this is just to send a periodic CAN message
+            {
+                last_fault
+            }
+            embassy_futures::select::Either3::Third(_) => {
+                // the countdown has been reached, unfault
+                state_send.signal(StateTransition::Functional(FunctionalType::READY));
                 FaultCode::FaultsClear
             }
         };
@@ -53,7 +73,7 @@ pub async fn fault_handler(
         fault_bits[0..3].copy_from_slice(&(last_fault as u32).to_be_bytes());
 
         can_send
-            .send(unwrap!(Frame::new_data(status_id, &fault_bits)))
+            .send(unwrap!(Frame::new_data(STATUS_MSG_ID, &fault_bits)))
             .await;
     }
 }
