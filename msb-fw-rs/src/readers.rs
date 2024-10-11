@@ -1,4 +1,4 @@
-use defmt::{unwrap, warn};
+use defmt::{trace, unwrap, warn};
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_stm32::{
     adc::RingBufferedAdc,
@@ -41,6 +41,7 @@ pub async fn temperature_reader(
         bits[..2].copy_from_slice(&temp);
         bits[2..].copy_from_slice(&humidity);
 
+        trace!("Sending temp: {}, humidity {}", res.temperature, res.humidity);
         let frame =
             Frame::new_data(TEMPERATURE_SEND_MSG_ID, &bits).expect("Could not create frame");
         can_send.send(frame).await;
@@ -81,6 +82,7 @@ pub async fn imu_reader(
         accel_bits[2..4].copy_from_slice(&(((accel.1 * 1000.0) as i16).to_be_bytes()));
         accel_bits[4..].copy_from_slice(&(((accel.2 * 1000.0) as i16).to_be_bytes()));
 
+        trace!("Sending accel: x {}, y {}, z {}", accel.0, accel.1, accel.2);
         let accel_frame =
             Frame::new_data(IMU_SEND_MSG_ID, &accel_bits).expect("Could not create frame");
 
@@ -88,6 +90,7 @@ pub async fn imu_reader(
         gyro_bits[2..4].copy_from_slice(&(((gyro.1 * 1000.0) as i16).to_be_bytes()));
         gyro_bits[4..].copy_from_slice(&(((gyro.2 * 1000.0) as i16).to_be_bytes()));
 
+        trace!("Sending gyro: x {}, y {}, z {}", gyro.0, gyro.1, gyro.2);
         let gyro_frame =
             Frame::new_data(GYRO_SEND_MSG_ID, &gyro_bits).expect("Could not create frame");
 
@@ -116,6 +119,7 @@ pub async fn tof_reader(
             continue;
         };
         let range_bits = rng.to_be_bytes();
+        trace!("Sending TOF range: {}", rng);
         can_send
             .send(unwrap!(Frame::new_data(TOF_SEND_MSG_ID, &range_bits)))
             .await;
@@ -140,6 +144,7 @@ pub async fn adc1_reader(
         match adc1.read(&mut measurements).await {
             Ok(_) => {
                 adc1.teardown_adc();
+                trace!("Sending strain + shockpot: {}", measurements);
                 // TODO transform measurements
                 strain_bits[0..2].copy_from_slice(&measurements[1].to_be_bytes());
                 strain_bits[2..4].copy_from_slice(&measurements[2].to_be_bytes());

@@ -1,5 +1,5 @@
 [workspace]
-members = ["msb-fw-rs", "cerberus", "wheel", "crates/*"]
+members = ["msb-fw-rs","crates/*"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -19,7 +19,7 @@ embedded-hal = { version = "1.0.0", features = ["defmt-03"] }
 embedded-hal-bus = { version = "0.2", features = ["async", "defmt-03"] }
 embedded-io = { version = "0.6.0", features = ["defmt-03"] }
 embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
-panic-probe = { version = "0.3", features = ["print-defmt"] }
+panic-probe = { version = "0.3", features = ["print-defmt", "defmt-error"] }
 heapless = { version = "0.8", default-features = false }
 static_cell = "2.1.0"
 #chrono = { version = "^0.4", default-features = false}

@@ -18,6 +18,18 @@ To format, run `cargo format`.
 
 To lint and check stuff, run `cargo clippy`.
 
+###  On car stuff
+
+To run a RTT terminal dedicated:
+`cargo embed --release --config rtt`
+
+To run a GDB terminal dedicated:
+`cargo embed --release --config gdb`
+
+To flash and leave code:
+`cargo embed --release --config `
+
+
 
 ### Coding tips and tricks
 
@@ -32,11 +44,11 @@ This is a mega-repo configured as a normal embassy-styled project with multiple 
 
 Various files:
 
-Top level `Cargo.toml`, `Embed.toml`, `build.rs`, and `rust-toolchain.toml` define the various parts of the embassy project.  See comments inside for how these were structure, but most follow embassy specification.
+Top level `Cargo.toml`, `Embed.toml`, and `rust-toolchain.toml` define the various parts of the embassy project.  See comments inside for how these were structure, but most follow embassy specification.
 
 The `crates` folder defines drivers or other code shared between projects.
 
-Top level folders like `msb-fw-rs`, and any other project, define projects which inherit explicity defined `Cargo.toml` dependencies, `build.rs` and `Embed.toml` settings, and more.  They can also depend on a crate in the `crates` folder.
+Top level folders like `msb-fw-rs`, and any other project, define projects which inherit explicity defined `Cargo.toml` dependencies and `Embed.toml` settings, and more.  They can also depend on a crate in the `crates` folder.
 
 This structure has multiple benefits, including:
 - Static versioning of all embassy and other dependencies, eliminating version conflicts for in-tree code

@@ -3,7 +3,7 @@ use embassy_time::{Duration, Timer};
 
 use crate::DeviceLocation;
 
-const LED_REFRESH_TIME: Duration = Duration::from_secs(2);
+const LED_REFRESH_TIME: Duration = Duration::from_millis(250);
 
 #[embassy_executor::task]
 pub async fn control_leds(
@@ -11,25 +11,48 @@ pub async fn control_leds(
     mut led2: Output<'static>,
     device_loc: DeviceLocation,
 ) {
+    let mut i = 0u8;
     loop {
-        Timer::after(LED_REFRESH_TIME).await;
-        match device_loc {
-            DeviceLocation::FrontLeft => {
-                led1.set_high();
-                led2.set_high();
+        if i % 8 == 0 {
+            match device_loc {
+                DeviceLocation::FrontLeft => {
+                    led1.set_low();
+                    led2.set_low();
+                }
+                DeviceLocation::FrontRight => {
+                    led1.set_low();
+                    led2.set_high();
+                }
+                DeviceLocation::BackLeft => {
+                    led1.set_high();
+                    led2.set_low();
+                }
+                DeviceLocation::BackRight => {
+                    led1.set_high();
+                    led2.set_high();
+                }
             }
-            DeviceLocation::BackLeft => {
-                led1.set_low();
-                led2.set_high();
-            }
-            DeviceLocation::BackRight => {
-                led1.set_low();
-                led2.set_low();
-            }
-            DeviceLocation::FrontRight => {
-                led1.set_high();
-                led2.set_low();
+        } else {
+            match device_loc {
+                DeviceLocation::FrontLeft => {
+                    led1.set_high();
+                    led2.set_high();
+                }
+                DeviceLocation::FrontRight => {
+                    led1.set_high();
+                    led2.set_low();
+                }
+                DeviceLocation::BackLeft => {
+                    led1.set_low();
+                    led2.set_high();
+                }
+                DeviceLocation::BackRight => {
+                    led1.set_low();
+                    led2.set_low();
+                }
             }
         }
+        i = i.wrapping_add(1);
+        Timer::after(LED_REFRESH_TIME).await;
     }
 }

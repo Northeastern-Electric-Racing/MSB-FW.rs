@@ -6,7 +6,6 @@ use crate::DeviceLocation;
 
 const CAN_BITRATE: u32 = 500_000;
 
-
 #[embassy_executor::task]
 pub async fn can_handler(
     mut can: Can<'static>,
@@ -14,7 +13,9 @@ pub async fn can_handler(
     loc: DeviceLocation,
 ) {
     can.set_bitrate(CAN_BITRATE);
+    trace!("Attempting to enable CAN..");
     can.enable().await;
+    trace!("CAN enabled");
 
     loop {
         let frame = recv.receive().await;

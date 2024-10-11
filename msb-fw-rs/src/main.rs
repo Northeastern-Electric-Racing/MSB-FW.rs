@@ -4,12 +4,10 @@
 
 use core::fmt::Write;
 
-use cortex_m::{peripheral::SCB, singleton};
-use cortex_m_rt::{exception, ExceptionFrame};
-use defmt::{info, unwrap, warn};
+use defmt::{debug, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::{
-    adc::{Adc, SampleTime, Sequence},
+    adc::Adc,
     bind_interrupts,
     can::{Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler},
     i2c::{self, I2c},
@@ -60,7 +58,7 @@ static CAN_CHANNEL: Channel<ThreadModeRawMutex, Frame, 25> = Channel::new();
 async fn main(spawner: Spawner) -> ! {
     info!("Initializing MSB-FW...");
     // initialize the project, ensure we can debug during sleep
-    let mut p = embassy_stm32::init(Config::default());
+    let p = embassy_stm32::init(Config::default());
 
     // create some GPIO on input mode and read from them
     let pin0 = Input::new(p.PC10, Pull::None);
@@ -74,26 +72,22 @@ async fn main(spawner: Spawner) -> ! {
 
     // create our MSB device location from the pin states
     let loc = DeviceLocation::from((addr0, addr1, addr2));
+    info!("MSB Location is: {}", loc);
 
     // create a thread to hold some LEDs and blink them or whatever
     let led1 = Output::new(p.PC4, Level::High, Speed::Low);
     let led2 = Output::new(p.PC5, Level::High, Speed::Low);
-    if let Err(err) = spawner.spawn(controllers::control_leds(
+    spawner.must_spawn(controllers::control_leds(
         // note that most types have an internal generic holding the pin or bus itself, this can be removed by degrade
         // this makes types more generic and should be done for all pins, but is not necessary for multi-bus i2c or whatnot
         led1,
         led2,
         loc.clone(),
-    )) {
-        warn!("Could not spawn LED task: {}", err);
-    }
-
+    ));
     // embassy enforces pin mappings to their correct functions for the most at compile time
     let can = Can::new(p.CAN1, p.PA11, p.PA12, IrqsCAN);
     // pass in a can channel consumer to get the frames from any producer
-    if let Err(err) = spawner.spawn(can_handler::can_handler(can, CAN_CHANNEL.receiver(), loc)) {
-        warn!("Could not spawn CAN task: {}", err);
-    }
+    spawner.must_spawn(can_handler::can_handler(can, CAN_CHANNEL.receiver(), loc));
 
     // checkout this fuckery, the official way to have two things use one i2c bus
     // see here: https://github.com/embassy-rs/embassy/blob/main/examples/rp/src/bin/shared_bus.rs
@@ -110,22 +104,20 @@ async fn main(spawner: Spawner) -> ! {
         i2c::Config::default(),
     );
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
-    if let Err(err) = spawner.spawn(readers::temperature_reader(i2c_bus, CAN_CHANNEL.sender())) {
-        warn!("Could not spawn CAN task: {}", err);
-    }
+    spawner.must_spawn(readers::temperature_reader(i2c_bus, CAN_CHANNEL.sender()));
 
     // this pretty much straight from docs, adc dma is very new in embassy stm32 hal
-    const ADC_BUF_SIZE: usize = 1024;
-    let adc1 = Adc::new(p.ADC1);
-    let adc_data = singleton!(ADCDAT : [u16; ADC_BUF_SIZE] = [0u16; ADC_BUF_SIZE])
-        .expect("Could not init adc buffer");
-    let mut adc1 = adc1.into_ring_buffered(p.DMA2_CH0, adc_data);
-    adc1.set_sample_sequence(Sequence::One, &mut p.PA0, SampleTime::CYCLES112); // SHOCKPOT
-    adc1.set_sample_sequence(Sequence::Two, &mut p.PA5, SampleTime::CYCLES112); // STRAIN 1
-    adc1.set_sample_sequence(Sequence::Three, &mut p.PA6, SampleTime::CYCLES112); // STRAIN 2
-    if let Err(err) = spawner.spawn(readers::adc1_reader(adc1, CAN_CHANNEL.sender())) {
-        warn!("Could not spawn ADC1 task: {}", err);
-    }
+    // const ADC_BUF_SIZE: usize = 1024;
+    // let adc1 = Adc::new(p.ADC1);
+    // let adc_data = singleton!(ADCDAT : [u16; ADC_BUF_SIZE] = [0u16; ADC_BUF_SIZE])
+    //     .expect("Could not init adc buffer");
+    //let mut adc1 = adc1.into_ring_buffered(p.DMA2_CH0, adc_data);
+    // adc1.set_sample_sequence(Sequence::One, &mut p.PA0, SampleTime::CYCLES112); // SHOCKPOT
+    // adc1.set_sample_sequence(Sequence::Two, &mut p.PA5, SampleTime::CYCLES112); // STRAIN 1
+    // adc1.set_sample_sequence(Sequence::Three, &mut p.PA6, SampleTime::CYCLES112); // STRAIN 2
+    // if let Err(err) = spawner.spawn(readers::adc1_reader(adc1, CAN_CHANNEL.sender())) {
+    //     warn!("Could not spawn ADC1 task: {}", err);
+    // }
 
     let mut usart = Uart::new(
         p.USART2,
@@ -138,19 +130,31 @@ async fn main(spawner: Spawner) -> ! {
     )
     .unwrap();
     let mut s: String<128> = String::new();
-    core::write!(&mut s, "Hello DMA World!\r\n",).unwrap();
+    core::write!(&mut s, "MSB-FW.rs prints in RTT, not UART!\r\n",).unwrap();
     unwrap!(usart.write(s.as_bytes()).await);
 
-    let mut watchdog = IndependentWatchdog::new(p.IWDG, 4000000);
+    let mut watchdog = IndependentWatchdog::new(p.IWDG, 1000000);
     watchdog.unleash();
     loop {
-        info!("Status: Alive");
-        Timer::after_secs(3).await;
+        debug!("Status: Alive");
+        Timer::after_millis(500).await;
         watchdog.pet();
     }
 }
 
-#[exception]
-unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
-    SCB::sys_reset() // <- you could do something other than reset
+// #[exception]
+// unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
+//     SCB::sys_reset() // <- you could do something other than reset
+// }
+/// Hardfault handler.
+#[cortex_m_rt::exception]
+unsafe fn HardFault(_frame: &cortex_m_rt::ExceptionFrame) -> ! {
+    loop {}
+}
+
+// same panicking *behavior* as `panic-probe` but doesn't print a panic message
+// this prevents the panic message being printed *twice* when `defmt::panic` is invoked
+#[defmt::panic_handler]
+fn panic() -> ! {
+    cortex_m::asm::udf()
 }

@@ -2,6 +2,7 @@
 #![feature(impl_trait_in_assoc_type)]
 #![feature(const_option)]
 
+
 // declare all files in this project except main
 pub mod can_handler;
 pub mod controllers;
@@ -15,7 +16,7 @@ pub type SharedI2c3 = embassy_sync::mutex::Mutex<
     embassy_sync::blocking_mutex::raw::NoopRawMutex,
     embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async>,
 >;
-#[derive(Clone)]
+#[derive(Clone, defmt::Format)]
 pub enum DeviceLocation {
     FrontLeft,
     BackLeft,
