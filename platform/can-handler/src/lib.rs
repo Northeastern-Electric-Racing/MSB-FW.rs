@@ -5,8 +5,7 @@
 //! ([`can_handler`]) that bridges the CAN bus with the rest of a user program
 //! over [`embassy_sync`] channels.
 //!
-//! The bus is configured for Classical CAN at 500 kbit/s. See [`NerCan::init`]
-//! for the exact timing and filter configuration.
+//! The bus is configured for Classical CAN at 500 kbit/s. 
 #![no_std]
 
 use core::num::{NonZeroU8, NonZeroU16};
@@ -23,7 +22,7 @@ pub struct NerCan {
 
 impl NerCan {
     /// This is the CAN configuration to be used by most NER Projects.
-    /// This is for optional use to pass into the can_handler task to facilitate initialize
+    /// This is for optional use to pass into the can_handler task to facilitate initialization
     ///
     /// The configuration sets:
     /// - Automatic bus-off recovery enabled.
@@ -61,7 +60,7 @@ impl NerCan {
 ///
 /// Puts the configurator into normal mode and then services the bus in a loop,
 ///
-/// **The `sender` and `receiver` are not intended to derive from the same
+/// **The `sender` and `receiver` are not intended to derive from the same channel
 ///
 /// - `sender` passes on CAN frames received from the bus so they can be parsed
 ///   by the user program.
