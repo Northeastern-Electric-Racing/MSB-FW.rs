@@ -38,24 +38,28 @@ impl NerCan {
     /// 
     /// ** It is expected that the user manually configures the CAn Std and Extended Filters before running the can_handler task
     /// ** Hardcodes bitrate to 500 kbit/s, if CAN sampling causes issues, this must be adjusted in this lib
-    pub fn init(mut self) {
+    pub fn init(mut can_configurator: CanConfigurator<'static>) -> Self {
         use embassy_stm32::can::config::*;
+
         let can_config = FdCanConfig::default()
-            .set_automatic_bus_off_recovery(true)   
+            .set_automatic_bus_off_recovery(true)
             .set_automatic_retransmit(false)
             .set_frame_transmit(FrameTransmissionConfig::ClassicCanOnly)
             .set_transmit_pause(true)
             .set_global_filter(GlobalFilter::reject_all());
-        self.can_configurator.set_config(can_config);
-        self.can_configurator.set_bitrate(500_000);
+        can_configurator.set_config(can_config);
+        can_configurator.set_bitrate(500_000);
 
-        self.used_std_slots = Vec::new();
-        self.used_ext_slots = Vec::new();
-    }   
+        Self {
+            can_configurator,
+            used_std_slots: Vec::new(),
+            used_ext_slots: Vec::new(),
+        }
+    }
 
     /// Sets adds a new CAN Standard Filter at the given slot
     /// NOTE: will panic if the given slot is already in use
-    pub fn add_standard_filter(mut self, std_filter_slot: StandardFilterSlot, std_id1: u16, std_id2: Option<u16>) {
+    pub fn add_standard_filter(mut self, std_filter_slot: StandardFilterSlot, std_id1: u16, std_id2: Option<u16>) -> Self {
         if self.used_std_slots.contains(&std_filter_slot) {
             panic!("The selected CAN Standard Filter Slot is already in use.");
         }
@@ -72,11 +76,13 @@ impl NerCan {
         std.action = Action::StoreInFifo0;
         self.can_configurator.properties().set_standard_filter(std_filter_slot, std);
         let _ = self.used_std_slots.push(std_filter_slot);
-    }   
+
+        self
+    }
 
     /// Sets adds a new CAN Extended Filter at the given slot
     /// NOTE: will panic if the given slot is already in use
-    pub fn add_extended_filter(mut self, ext_filter_slot: ExtendedFilterSlot, ext_id1: u32, ext_id2: Option<u32>) {
+    pub fn add_extended_filter(mut self, ext_filter_slot: ExtendedFilterSlot, ext_id1: u32, ext_id2: Option<u32>) -> Self {
         if self.used_ext_slots.contains(&ext_filter_slot) {
             panic!("The selected CAN Extended Filter Slot is already in use.");
         }
@@ -93,7 +99,9 @@ impl NerCan {
         ext.action = Action::StoreInFifo0;
         self.can_configurator.properties().set_extended_filter(ext_filter_slot, ext);
         let _ = self.used_ext_slots.push(ext_filter_slot);
-    }     
+
+        self
+    }
 }
 
 /// CAN handler Embassy task for generic use in STM32H5 projects.
