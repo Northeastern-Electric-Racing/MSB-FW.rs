@@ -9,12 +9,19 @@
 #![no_std]
 use defmt::{warn};
 use embassy_futures::select::{Either, select};
+use embassy_stm32::can::filter::FilterType::{DedicatedDual, DedicatedSingle};
+use embassy_stm32::can::filter::{Action, ExtendedFilter, ExtendedFilterSlot, StandardFilter, StandardFilterSlot};
 use embassy_stm32::can::{CanConfigurator, Frame};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
+use embedded_can::{ExtendedId, StandardId};
+
+use heapless::Vec;
 
 pub struct NerCan {
-    can_configurator: CanConfigurator<'static>,
+    pub can_configurator: CanConfigurator<'static>,
+    used_std_slots: Vec<StandardFilterSlot, 28>,
+    used_ext_slots: Vec<ExtendedFilterSlot, 28>,
 }
 
 impl NerCan {
@@ -41,7 +48,48 @@ impl NerCan {
             .set_global_filter(GlobalFilter::reject_all());
         self.can_configurator.set_config(can_config);
         self.can_configurator.set_bitrate(500_000);
-    }       
+
+        self.used_std_slots = Vec::new();
+        self.used_ext_slots = Vec::new();
+    }   
+
+    pub fn add_standard_filter(mut self, std_filter_slot: StandardFilterSlot, std_id1: u16, std_id2: Option<u16>) {
+        if self.used_std_slots.contains(&std_filter_slot) {
+            panic!("The selected CAN Standard Filter Slot is already in use.");
+        }
+
+        let mut std = StandardFilter::default();
+        match std_id2 {
+            Some(id2) => {
+                std.filter = DedicatedDual(StandardId::new(std_id1).unwrap(), StandardId::new(id2).unwrap());
+            }
+            None => {
+                std.filter = DedicatedSingle(StandardId::new(std_id1).unwrap());
+            }
+        }
+        std.action = Action::StoreInFifo0;
+        self.can_configurator.properties().set_standard_filter(std_filter_slot, std);
+        let _ = self.used_std_slots.push(std_filter_slot);
+    }   
+
+    pub fn add_extended_filter(mut self, ext_filter_slot: ExtendedFilterSlot, ext_id1: u32, ext_id2: Option<u32>) {
+        if self.used_ext_slots.contains(&ext_filter_slot) {
+            panic!("The selected CAN Extended Filter Slot is already in use.");
+        }
+
+        let mut ext = ExtendedFilter::default();
+        match ext_id2 { 
+            Some(id2) => {
+                ext.filter = DedicatedDual(ExtendedId::new(ext_id1).unwrap(), ExtendedId::new(id2).unwrap());
+            }
+            None => {
+                ext.filter = DedicatedSingle(ExtendedId::new(ext_id1).unwrap());
+            }
+        }
+        ext.action = Action::StoreInFifo0;
+        self.can_configurator.properties().set_extended_filter(ext_filter_slot, ext);
+        let _ = self.used_ext_slots.push(ext_filter_slot);
+    }     
 }
 
 /// CAN handler Embassy task for generic use in STM32H5 projects.
