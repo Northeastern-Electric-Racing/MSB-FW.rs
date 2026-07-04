@@ -1,4 +1,3 @@
-#![no_std]
 //! Generic CAN handler for NER STM32H5 firmware projects.
 //!
 //! This crate wraps Embassy's `embassy-stm32` FDCAN peripheral to provide a
@@ -8,6 +7,7 @@
 //!
 //! The bus is configured for Classical CAN at 500 kbit/s. See [`NerCan::init`]
 //! for the exact timing and filter configuration.
+#![no_std]
 
 use core::num::{NonZeroU8, NonZeroU16};
 
