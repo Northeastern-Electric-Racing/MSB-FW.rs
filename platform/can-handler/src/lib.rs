@@ -53,6 +53,8 @@ impl NerCan {
         self.used_ext_slots = Vec::new();
     }   
 
+    /// Sets adds a new CAN Standard Filter at the given slot
+    /// NOTE: will panic if the given slot is already in use
     pub fn add_standard_filter(mut self, std_filter_slot: StandardFilterSlot, std_id1: u16, std_id2: Option<u16>) {
         if self.used_std_slots.contains(&std_filter_slot) {
             panic!("The selected CAN Standard Filter Slot is already in use.");
@@ -72,6 +74,8 @@ impl NerCan {
         let _ = self.used_std_slots.push(std_filter_slot);
     }   
 
+    /// Sets adds a new CAN Extended Filter at the given slot
+    /// NOTE: will panic if the given slot is already in use
     pub fn add_extended_filter(mut self, ext_filter_slot: ExtendedFilterSlot, ext_id1: u32, ext_id2: Option<u32>) {
         if self.used_ext_slots.contains(&ext_filter_slot) {
             panic!("The selected CAN Extended Filter Slot is already in use.");
