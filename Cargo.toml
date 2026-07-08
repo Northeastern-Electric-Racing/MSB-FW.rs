@@ -2,6 +2,8 @@
 members = ["drivers/*", "platform/*", "utilities/*"]
 resolver = "3"
 
+exclude = ["utilities/cangen/cangen-macro"]
+
 [workspace.dependencies]
 defmt = "1"
 
