@@ -11,6 +11,6 @@ embassy-futures = "0.1.2"
 embassy-sync = "0.8.0"
 
 defmt.workspace = true
-embedded-can = "0.4.1"
+embedded-can.workspace = true
 heapless = "0.9.3"
 

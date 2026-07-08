@@ -1,0 +1,277 @@
+use definition_rs::{CANMsg, NetField, OdysseyMsg};
+use heck::{AsPascalCase, AsSnakeCase};
+use proc_macro::TokenStream;
+use quote::quote;
+use std::fs;
+use syn::Ident;
+
+extern crate proc_macro;
+
+const CANGEN_SPEC_PATH: &str = "../Odyssey-Definitions/can-messages/";
+
+#[proc_macro]
+pub fn generate_all_messages(_stream: TokenStream) -> TokenStream {
+    // get the parsed JSON of each valid spec file
+    let __parsed = match fs::read_dir(CANGEN_SPEC_PATH) {
+        Ok(__parsed) => __parsed,
+        Err(__error) => {
+            eprintln!("Could not read from directory: {CANGEN_SPEC_PATH} with error: {__error}");
+            return TokenStream::new();
+        }
+    };
+
+    let __json: Vec<OdysseyMsg> = __parsed
+        .filter_map(Result::ok)
+        .map(|__entry| __entry.path())
+        .filter(|__path| __path.is_file() && __path.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|__path| {
+            let __data = match fs::read_to_string(__path) {
+                Ok(__data) => __data,
+                Err(__error) => {
+                    eprintln!("Could not read file: {__error}");
+                    return None;
+                }
+            };
+
+            // treat deserialization failures as critical
+            Some(
+                serde_json::from_str::<Vec<OdysseyMsg>>(&__data)
+                    .expect("Error deserializing {__path}"),
+            )
+        })
+        .flatten()
+        .collect();
+
+    let decls: Vec<proc_macro2::TokenStream> = __json
+        .into_iter()
+        .filter_map(|f| match f {
+            OdysseyMsg::Can(canmsg) => Some(build_struct(canmsg)),
+            OdysseyMsg::Meta(_meta_msg) => None,
+        })
+        .collect();
+
+    let res = quote! {
+        #( #decls )*
+    };
+
+    TokenStream::from(res)
+}
+
+/// Smallest unsigned Rust integer type able to hold `bits` bits.
+fn uint_for(bits: usize) -> proc_macro2::TokenStream {
+    match bits {
+        0..=8 => quote! { u8 },
+        9..=16 => quote! { u16 },
+        17..=32 => quote! { u32 },
+        _ => quote! { u64 },
+    }
+}
+
+/// Smallest signed Rust integer type able to hold `bits` bits.
+fn int_for(bits: usize) -> proc_macro2::TokenStream {
+    match bits {
+        8 => quote! { i8 },
+        16 => quote! { i16 },
+        32 => quote! { i32 },
+        64 => quote! { i64 },
+        _ => panic!("Invalid not byte aligned signed integer!"),
+    }
+}
+
+/// Path to a helper in `cangen`'s `conv` module (e.g. `conv::div_from_u16`).
+fn conv_path(name: &str) -> proc_macro2::TokenStream {
+    let id = Ident::new(name, proc_macro2::Span::call_site());
+    quote! { conv::#id }
+}
+
+/// Build `#[doc = ..]` attributes for a field from its matched `NetField`.
+///
+/// A `NetField`'s `values` list the 1-indexed points it documents, so several
+/// points (e.g. IMU x/y/z) can share one field. We surface the human `doc`,
+/// then the `desc` (often an enum-value legend), then the `unit`.
+fn doc_attrs(nf: Option<&NetField>) -> proc_macro2::TokenStream {
+    let Some(nf) = nf else { return quote!() };
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut push_para = |text: &str| {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        if !lines.is_empty() {
+            lines.push(String::new()); // blank line between paragraphs
+        }
+        // Prefix a space so rendered rustdoc reads `/// text`, not `///text`.
+        lines.push(format!(" {text}"));
+    };
+
+    push_para(&nf.doc);
+    if let Some(desc) = nf.desc.as_deref() {
+        push_para(desc);
+    }
+    if !nf.unit.trim().is_empty() {
+        push_para(&format!("Units: {}", nf.unit.trim()));
+    }
+
+    let docs = lines.into_iter().map(|l| quote! { #[doc = #l] });
+    quote! { #(#docs)* }
+}
+
+/// Build the `bitfield_struct` field declaration for a single CAN point.
+///
+/// Numeric points are exposed as `f32` (the Rust equivalent of the spec's C
+/// `float`) with `#[bits(N, from = .., into = ..)]` pointing at the `conv`
+/// helpers, which apply the formatter's divisor/multiplier. Plain integers and
+/// booleans use `bitfield_struct`'s native support. Unnamed or `parse: false`
+/// points become `_reserved` padding.
+fn field_tokens(i: usize, f: &definition_rs::CANPoint) -> proc_macro2::TokenStream {
+    let bits = proc_macro2::Literal::usize_unsuffixed(f.size);
+    let signed = f.signed.unwrap_or(false);
+
+    // A point contributes bits but no accessor when it has no usable name or is
+    // explicitly marked `parse: false`.
+    let named = f.name.as_ref().filter(|n| !n.is_empty());
+    if named.is_none() || !f.parse.unwrap_or(true) {
+        let ident = Ident::new(&format!("_reserved{i}"), proc_macro2::Span::call_site());
+        let ty = uint_for(f.size);
+        return quote! { #[bits(#bits)] #ident: #ty };
+    }
+    let ident = Ident::new(
+        AsSnakeCase(named.unwrap()).0,
+        proc_macro2::Span::call_site(),
+    );
+    let storage = uint_for(f.size).to_string(); // "u8" / "u16" / ... — helper suffix
+    let b = proc_macro2::Literal::u32_unsuffixed(f.size as u32);
+
+    // Scaled `f32` accessor: physical value in/out, raw integer stored.
+    let scaled = |op: &str, arg: u32| -> proc_macro2::TokenStream {
+        let sp = if signed { "s" } else { "" };
+        let from_fn = conv_path(&format!("{sp}{op}_from_{storage}"));
+        let into_fn = conv_path(&format!("{sp}{op}_into_{storage}"));
+        let arg = proc_macro2::Literal::u32_unsuffixed(arg);
+        quote! {
+            #[bits(#bits, from = #from_fn::<#b, #arg>, into = #into_fn::<#b, #arg>)]
+            pub #ident: f32
+        }
+    };
+
+    // A raw 32-bit IEEE-754 float is stored verbatim.
+    if f.ieee754_f32.unwrap_or(false) {
+        return quote! {
+            #[bits(#bits, from = f32::from_bits, into = f32::to_bits)]
+            pub #ident: f32
+        };
+    }
+
+    if let Some(fmt) = &f.formatter {
+        match fmt.key.as_str() {
+            "divide" => return scaled("div", fmt.arg as u32),
+            "multiply" => return scaled("mul", fmt.arg as u32),
+            // TODO: the `temperature` formatter is a nonlinear thermistor lookup
+            // not captured by the spec; expose the raw counts for now.
+            _ => {}
+        }
+    }
+
+    match f.c_type.as_deref() {
+        // Unformatted float: identity scaling (divisor 1) so the accessor stays `f32`.
+        Some("float") => scaled("div", 1),
+        Some("bool") if f.size == 1 => quote! { #[bits(#bits)] pub #ident: bool },
+        _ => {
+            let ty = if signed {
+                int_for(f.size)
+            } else {
+                uint_for(f.size)
+            };
+            quote! { #[bits(#bits)] pub #ident: #ty }
+        }
+    }
+}
+
+fn build_struct(msg: CANMsg) -> proc_macro2::TokenStream {
+    // the total count of bits sent, including parse=false bits
+    let bit_cnt: usize = msg.points.iter().map(|f| f.size).sum();
+    let min_size_raw = bit_cnt.div_ceil(8);
+    // the minimum number of bytes to hold the message (effectively the DLC)
+    let min_size = quote! { #min_size_raw };
+
+    let struct_name = Ident::new(
+        &format!(
+            "{}",
+            AsPascalCase(msg.desc.clone().to_lowercase().replace(' ', "_"))
+        ),
+        proc_macro2::Span::call_site(),
+    );
+
+    let id_int = u32::from_str_radix(msg.id.clone().trim_start_matches("0x"), 16).unwrap();
+    let ext_ident = msg.is_ext.unwrap_or(false);
+
+    let id_decl = if ext_ident {
+        quote! { Id::Extended(ExtendedId::new(#id_int).unwrap()) }
+    } else {
+        // StandardId::new takes a u16; standard IDs always fit.
+        quote! { Id::Standard(StandardId::new(#id_int as u16).unwrap()) }
+    };
+
+    let ts_bits = match bit_cnt {
+        0..=8 => 8usize,
+        9..=16 => 16,
+        17..=32 => 32,
+        _ => 64,
+    };
+
+    // Map each 1-indexed point position to the `NetField` that documents it.
+    // A field's `values` may list several points (e.g. IMU x/y/z share a doc).
+    let mut doc_for: std::collections::HashMap<usize, &NetField> = std::collections::HashMap::new();
+    for nf in &msg.fields {
+        for &v in &nf.values {
+            doc_for.entry(v).or_insert(nf);
+        }
+    }
+
+    let mut field_declarations: Vec<proc_macro2::TokenStream> = msg
+        .points
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let docs = doc_attrs(doc_for.get(&(i + 1)).copied());
+            let field = field_tokens(i, f);
+            quote! { #docs #field }
+        })
+        .collect();
+
+    // Fill the remainder of the backing integer with trailing padding.
+    if ts_bits > bit_cnt {
+        let pad = ts_bits - bit_cnt;
+        let bits = proc_macro2::Literal::usize_unsuffixed(pad);
+        let ty = uint_for(pad);
+        let ident = Ident::new(
+            &format!("_reserved{}", msg.points.len()),
+            proc_macro2::Span::call_site(),
+        );
+        field_declarations.push(quote! { #[bits(#bits)] #ident: #ty });
+    }
+
+    let ts = uint_for(bit_cnt);
+
+    // 3. Generate the final output Rust code
+    let expanded = quote! {
+        #[bitfield(#ts)]
+        pub struct #struct_name {
+            #(#field_declarations),*
+        }
+    };
+
+    let tr = quote! {
+        impl ToCanFrame for #struct_name {
+            type Repr  = #ts;
+            const LEN: usize = #min_size;
+            const ID: Id = #id_decl;
+        }
+    };
+
+    quote! {
+        #tr
+        #expanded
+    }
+}
