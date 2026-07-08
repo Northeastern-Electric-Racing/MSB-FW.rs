@@ -61,6 +61,17 @@ pub trait ToCanFrame: Sized + Into<Self::Repr> {
     }
 }
 
+/// Error returned by the generated `try_with_*` / `try_set_*` accessors when a
+/// physical value can't be represented in a scaled field's bit width.
+///
+/// The plain `with_*` / `set_*` accessors saturate such values instead of
+/// failing; use the `try_*` variants when you need to detect the condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutOfRange {
+    /// The field (snake_case accessor name) that rejected the value.
+    pub field: &'static str,
+}
+
 /// Scaled fixed-point conversion helpers used by the generated bitfields.
 ///
 /// Every generated numeric field exposes the *physical* value as an `f32`
@@ -84,37 +95,81 @@ pub mod conv {
             pub const fn $div_from<const B: u32, const ARG: u32>(bits: $u) -> f32 {
                 bits as f32 / ARG as f32
             }
+            /// Saturates the raw count to `[0, 2^B - 1]`, so an out-of-range
+            /// physical value pins to the field's max instead of wrapping or
+            /// panicking. The clamped result is always within the `#[bits(B)]`
+            /// range, so `bitfield_struct`'s bounds check never fires.
             pub const fn $div_into<const B: u32, const ARG: u32>(v: f32) -> $u {
-                let mask = <$u>::MAX >> ($w - B);
-                ((v * ARG as f32) as $u) & mask
+                let hi = (<$u>::MAX >> ($w - B)) as f32;
+                let raw = v * ARG as f32;
+                (if raw < 0.0 {
+                    0.0
+                } else if raw > hi {
+                    hi
+                } else {
+                    raw
+                }) as $u
             }
             /// unsigned, multiply: physical = raw * ARG
             pub const fn $mul_from<const B: u32, const ARG: u32>(bits: $u) -> f32 {
                 bits as f32 * ARG as f32
             }
+            /// Saturates the raw count to `[0, 2^B - 1]` (see `$div_into`).
             pub const fn $mul_into<const B: u32, const ARG: u32>(v: f32) -> $u {
-                let mask = <$u>::MAX >> ($w - B);
-                ((v / ARG as f32) as $u) & mask
+                let hi = (<$u>::MAX >> ($w - B)) as f32;
+                let raw = v / ARG as f32;
+                (if raw < 0.0 {
+                    0.0
+                } else if raw > hi {
+                    hi
+                } else {
+                    raw
+                }) as $u
             }
-            /// signed, divide (sign-extended over B bits)
+            /// signed, divide: sign-extended over B bits on read.
             pub const fn $sdiv_from<const B: u32, const ARG: u32>(bits: $u) -> f32 {
                 let sh = $w - B;
                 let s = ((bits << sh) as $i) >> sh;
                 s as f32 / ARG as f32
             }
+            /// Saturates the raw count to `[-2^(B-1), 2^(B-1) - 1]`, then masks
+            /// to B bits so the two's-complement pattern fits the field.
             pub const fn $sdiv_into<const B: u32, const ARG: u32>(v: f32) -> $u {
+                let half = 1i128 << (B - 1);
+                let hi = (half - 1) as f32;
+                let lo = -(half as f32);
+                let raw = v * ARG as f32;
+                let raw = if raw < lo {
+                    lo
+                } else if raw > hi {
+                    hi
+                } else {
+                    raw
+                };
                 let mask = <$u>::MAX >> ($w - B);
-                (((v * ARG as f32) as $i) as $u) & mask
+                ((raw as $i) as $u) & mask
             }
-            /// signed, multiply (sign-extended over B bits)
+            /// signed, multiply: sign-extended over B bits on read.
             pub const fn $smul_from<const B: u32, const ARG: u32>(bits: $u) -> f32 {
                 let sh = $w - B;
                 let s = ((bits << sh) as $i) >> sh;
                 s as f32 * ARG as f32
             }
+            /// Saturates the raw count to `[-2^(B-1), 2^(B-1) - 1]` (see `$sdiv_into`).
             pub const fn $smul_into<const B: u32, const ARG: u32>(v: f32) -> $u {
+                let half = 1i128 << (B - 1);
+                let hi = (half - 1) as f32;
+                let lo = -(half as f32);
+                let raw = v / ARG as f32;
+                let raw = if raw < lo {
+                    lo
+                } else if raw > hi {
+                    hi
+                } else {
+                    raw
+                };
                 let mask = <$u>::MAX >> ($w - B);
-                (((v / ARG as f32) as $i) as $u) & mask
+                ((raw as $i) as $u) & mask
             }
         };
     }

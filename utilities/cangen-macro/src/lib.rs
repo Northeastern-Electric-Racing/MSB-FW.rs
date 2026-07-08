@@ -117,14 +117,26 @@ fn doc_attrs(nf: Option<&NetField>) -> proc_macro2::TokenStream {
     quote! { #(#docs)* }
 }
 
-/// Build the `bitfield_struct` field declaration for a single CAN point.
+/// Build the `bitfield_struct` field declaration for a single CAN point, plus
+/// any `try_with_*` / `try_set_*` validating accessors it needs.
 ///
 /// Numeric points are exposed as `f32` (the Rust equivalent of the spec's C
 /// `float`) with `#[bits(N, from = .., into = ..)]` pointing at the `conv`
-/// helpers, which apply the formatter's divisor/multiplier. Plain integers and
-/// booleans use `bitfield_struct`'s native support. Unnamed or `parse: false`
-/// points become `_reserved` padding.
-fn field_tokens(i: usize, f: &definition_rs::CANPoint) -> proc_macro2::TokenStream {
+/// helpers, which apply the formatter's divisor/multiplier. Because the `into`
+/// helpers *saturate*, the generated `with_*`/`set_*` never panic — so for those
+/// scaled fields we also emit `try_*` accessors that reject out-of-range values
+/// up front (`bitfield_struct`'s own `*_checked` would always succeed here).
+///
+/// Plain integers and booleans use `bitfield_struct`'s native support (their
+/// `*_checked` already work). Unnamed or `parse: false` points become
+/// `_reserved` padding.
+///
+/// Returns `(field_declaration, checked_accessor_methods)`; the second is empty
+/// for non-scaled points.
+fn field_tokens(
+    i: usize,
+    f: &definition_rs::CANPoint,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let bits = proc_macro2::Literal::usize_unsuffixed(f.size);
     let signed = f.signed.unwrap_or(false);
 
@@ -134,7 +146,7 @@ fn field_tokens(i: usize, f: &definition_rs::CANPoint) -> proc_macro2::TokenStre
     if named.is_none() || !f.parse.unwrap_or(true) {
         let ident = Ident::new(&format!("_reserved{i}"), proc_macro2::Span::call_site());
         let ty = uint_for(f.size);
-        return quote! { #[bits(#bits)] #ident: #ty };
+        return (quote! { #[bits(#bits)] #ident: #ty }, quote!());
     }
     let ident = Ident::new(
         AsSnakeCase(named.unwrap()).0,
@@ -143,24 +155,77 @@ fn field_tokens(i: usize, f: &definition_rs::CANPoint) -> proc_macro2::TokenStre
     let storage = uint_for(f.size).to_string(); // "u8" / "u16" / ... — helper suffix
     let b = proc_macro2::Literal::u32_unsuffixed(f.size as u32);
 
-    // Scaled `f32` accessor: physical value in/out, raw integer stored.
-    let scaled = |op: &str, arg: u32| -> proc_macro2::TokenStream {
+    // Scaled `f32` accessor: physical value in/out, raw integer stored. Also
+    // emits `try_with_*` / `try_set_*` that reject values that can't be
+    // represented in `f.size` bits (before `into` would saturate them).
+    let scaled = |op: &str, arg: u32| -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
         let sp = if signed { "s" } else { "" };
         let from_fn = conv_path(&format!("{sp}{op}_from_{storage}"));
         let into_fn = conv_path(&format!("{sp}{op}_into_{storage}"));
-        let arg = proc_macro2::Literal::u32_unsuffixed(arg);
-        quote! {
-            #[bits(#bits, from = #from_fn::<#b, #arg>, into = #into_fn::<#b, #arg>)]
-            pub #ident: f32
-        }
-    };
-
-    // A raw 32-bit IEEE-754 float is stored verbatim.
-    if f.ieee754_f32.unwrap_or(false) {
-        return quote! {
-            #[bits(#bits, from = f32::from_bits, into = f32::to_bits)]
+        let arg_lit = proc_macro2::Literal::u32_unsuffixed(arg);
+        let decl = quote! {
+            #[bits(#bits, from = #from_fn::<#b, #arg_lit>, into = #into_fn::<#b, #arg_lit>)]
             pub #ident: f32
         };
+
+        // Representable raw range for this field, as f32 comparison bounds.
+        let n = f.size as i32;
+        let (lo, hi) = if signed {
+            let half = 2f64.powi(n - 1);
+            (-half, half - 1.0)
+        } else {
+            (0.0, 2f64.powi(n) - 1.0)
+        };
+        let lo = proc_macro2::Literal::f32_suffixed(lo as f32);
+        let hi = proc_macro2::Literal::f32_suffixed(hi as f32);
+        let arg_f = proc_macro2::Literal::f32_suffixed(arg as f32);
+        // raw counts: divide stores `v * ARG`, multiply stores `v / ARG`.
+        let raw = if op == "mul" {
+            quote! { v / #arg_f }
+        } else {
+            quote! { v * #arg_f }
+        };
+        let name = ident.to_string();
+        let try_with = quote::format_ident!("try_with_{}", ident);
+        let try_set = quote::format_ident!("try_set_{}", ident);
+        let with_real = quote::format_ident!("with_{}", ident);
+        let set_real = quote::format_ident!("set_{}", ident);
+        let checked = quote! {
+            #[doc = concat!("Like [`Self::", stringify!(#with_real), "`] but returns")]
+            #[doc = "[`OutOfRange`] instead of saturating an unrepresentable value."]
+            pub fn #try_with(self, v: f32) -> ::core::result::Result<Self, OutOfRange> {
+                let raw = #raw;
+                if raw >= #lo && raw <= #hi {
+                    ::core::result::Result::Ok(self.#with_real(v))
+                } else {
+                    ::core::result::Result::Err(OutOfRange { field: #name })
+                }
+            }
+            #[doc = concat!("Like [`Self::", stringify!(#set_real), "`] but returns")]
+            #[doc = "[`OutOfRange`] instead of saturating an unrepresentable value."]
+            pub fn #try_set(&mut self, v: f32) -> ::core::result::Result<(), OutOfRange> {
+                let raw = #raw;
+                if raw >= #lo && raw <= #hi {
+                    self.#set_real(v);
+                    ::core::result::Result::Ok(())
+                } else {
+                    ::core::result::Result::Err(OutOfRange { field: #name })
+                }
+            }
+        };
+        (decl, checked)
+    };
+
+    // A raw 32-bit IEEE-754 float is stored verbatim (every bit pattern is
+    // valid, so no range check is needed).
+    if f.ieee754_f32.unwrap_or(false) {
+        return (
+            quote! {
+                #[bits(#bits, from = f32::from_bits, into = f32::to_bits)]
+                pub #ident: f32
+            },
+            quote!(),
+        );
     }
 
     if let Some(fmt) = &f.formatter {
@@ -176,14 +241,14 @@ fn field_tokens(i: usize, f: &definition_rs::CANPoint) -> proc_macro2::TokenStre
     match f.c_type.as_deref() {
         // Unformatted float: identity scaling (divisor 1) so the accessor stays `f32`.
         Some("float") => scaled("div", 1),
-        Some("bool") if f.size == 1 => quote! { #[bits(#bits)] pub #ident: bool },
+        Some("bool") if f.size == 1 => (quote! { #[bits(#bits)] pub #ident: bool }, quote!()),
         _ => {
             let ty = if signed {
                 int_for(f.size)
             } else {
                 uint_for(f.size)
             };
-            quote! { #[bits(#bits)] pub #ident: #ty }
+            (quote! { #[bits(#bits)] pub #ident: #ty }, quote!())
         }
     }
 }
@@ -229,16 +294,14 @@ fn build_struct(msg: CANMsg) -> proc_macro2::TokenStream {
         }
     }
 
-    let mut field_declarations: Vec<proc_macro2::TokenStream> = msg
-        .points
-        .iter()
-        .enumerate()
-        .map(|(i, f)| {
-            let docs = doc_attrs(doc_for.get(&(i + 1)).copied());
-            let field = field_tokens(i, f);
-            quote! { #docs #field }
-        })
-        .collect();
+    let mut field_declarations: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut checked_methods: Vec<proc_macro2::TokenStream> = Vec::new();
+    for (i, f) in msg.points.iter().enumerate() {
+        let docs = doc_attrs(doc_for.get(&(i + 1)).copied());
+        let (field, checked) = field_tokens(i, f);
+        field_declarations.push(quote! { #docs #field });
+        checked_methods.push(checked);
+    }
 
     // Fill the remainder of the backing integer with trailing padding.
     if ts_bits > bit_cnt {
@@ -270,8 +333,16 @@ fn build_struct(msg: CANMsg) -> proc_macro2::TokenStream {
         }
     };
 
+    // Range-validating accessors for the saturating (scaled `f32`) fields.
+    let checked = quote! {
+        impl #struct_name {
+            #(#checked_methods)*
+        }
+    };
+
     quote! {
         #tr
         #expanded
+        #checked
     }
 }
