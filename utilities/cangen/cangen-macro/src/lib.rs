@@ -50,6 +50,7 @@ pub fn generate_all_messages(_stream: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // combine the structs together
     let res = quote! {
         #( #decls )*
     };
@@ -87,8 +88,7 @@ fn conv_path(name: &str) -> proc_macro2::TokenStream {
 /// Build `#[doc = ..]` attributes for a field from its matched `NetField`.
 ///
 /// A `NetField`'s `values` list the 1-indexed points it documents, so several
-/// points (e.g. IMU x/y/z) can share one field. We surface the human `doc`,
-/// then the `desc` (often an enum-value legend), then the `unit`.
+/// points (e.g. IMU x/y/z) can share one field.
 fn doc_attrs(nf: Option<&NetField>) -> proc_macro2::TokenStream {
     let Some(nf) = nf else { return quote!() };
 
@@ -113,6 +113,7 @@ fn doc_attrs(nf: Option<&NetField>) -> proc_macro2::TokenStream {
         push_para(&format!("Units: {}", nf.unit.trim()));
     }
 
+    // bitfield_struct appends it to all relevant functions as well!
     let docs = lines.into_iter().map(|l| quote! { #[doc = #l] });
     quote! { #(#docs)* }
 }
@@ -140,10 +141,11 @@ fn field_tokens(
     let bits = proc_macro2::Literal::usize_unsuffixed(f.size);
     let signed = f.signed.unwrap_or(false);
 
-    // A point contributes bits but no accessor when it has no usable name or is
-    // explicitly marked `parse: false`.
+    // A point contributes bits but no accessor when parse=false or no name
+    // This means no name is inferred and must be specified for code gen
     let named = f.name.as_ref().filter(|n| !n.is_empty());
     if named.is_none() || !f.parse.unwrap_or(true) {
+        // name all reserved bits as such
         let ident = Ident::new(&format!("_reserved{i}"), proc_macro2::Span::call_site());
         let ty = uint_for(f.size);
         return (quote! { #[bits(#bits)] #ident: #ty }, quote!());
@@ -152,7 +154,7 @@ fn field_tokens(
         AsSnakeCase(named.unwrap()).0,
         proc_macro2::Span::call_site(),
     );
-    let storage = uint_for(f.size).to_string(); // "u8" / "u16" / ... — helper suffix
+    let storage = uint_for(f.size).to_string();
     let b = proc_macro2::Literal::u32_unsuffixed(f.size as u32);
 
     // Scaled `f32` accessor: physical value in/out, raw integer stored. Also
@@ -195,7 +197,7 @@ fn field_tokens(
             #[doc = "[`OutOfRange`] instead of saturating an unrepresentable value."]
             pub fn #try_with(self, v: f32) -> ::core::result::Result<Self, OutOfRange> {
                 let raw = #raw;
-                if raw >= #lo && raw <= #hi {
+                if (#lo..#hi).contains(&raw) {
                     ::core::result::Result::Ok(self.#with_real(v))
                 } else {
                     ::core::result::Result::Err(OutOfRange { field: #name })
@@ -205,7 +207,7 @@ fn field_tokens(
             #[doc = "[`OutOfRange`] instead of saturating an unrepresentable value."]
             pub fn #try_set(&mut self, v: f32) -> ::core::result::Result<(), OutOfRange> {
                 let raw = #raw;
-                if raw >= #lo && raw <= #hi {
+                if (#lo..#hi).contains(&raw) {
                     self.#set_real(v);
                     ::core::result::Result::Ok(())
                 } else {
@@ -228,16 +230,17 @@ fn field_tokens(
         );
     }
 
+    // this turns our human language into the div/multiply functions
+    // see scaled! in cangen lib.rs
     if let Some(fmt) = &f.formatter {
         match fmt.key.as_str() {
             "divide" => return scaled("div", fmt.arg as u32),
             "multiply" => return scaled("mul", fmt.arg as u32),
-            // TODO: the `temperature` formatter is a nonlinear thermistor lookup
-            // not captured by the spec; expose the raw counts for now.
             _ => {}
         }
     }
 
+    // splits up our c_type into 3 sections: float, bool, and uint/ints
     match f.c_type.as_deref() {
         // Unformatted float: identity scaling (divisor 1) so the accessor stays `f32`.
         Some("float") => scaled("div", 1),
@@ -253,6 +256,7 @@ fn field_tokens(
     }
 }
 
+/// CANMsg -> bitfield and associated Impls
 fn build_struct(msg: CANMsg) -> proc_macro2::TokenStream {
     // the total count of bits sent, including parse=false bits
     let bit_cnt: usize = msg.points.iter().map(|f| f.size).sum();
@@ -271,6 +275,7 @@ fn build_struct(msg: CANMsg) -> proc_macro2::TokenStream {
     let id_int = u32::from_str_radix(msg.id.clone().trim_start_matches("0x"), 16).unwrap();
     let ext_ident = msg.is_ext.unwrap_or(false);
 
+    // this ends up being instantiated at a const context, compile time (prob?)
     let id_decl = if ext_ident {
         quote! { Id::Extended(ExtendedId::new(#id_int).unwrap()) }
     } else {
@@ -317,7 +322,7 @@ fn build_struct(msg: CANMsg) -> proc_macro2::TokenStream {
 
     let ts = uint_for(bit_cnt);
 
-    // 3. Generate the final output Rust code
+    // Generate the final output Rust code
     let expanded = quote! {
         #[bitfield(#ts)]
         pub struct #struct_name {

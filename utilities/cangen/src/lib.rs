@@ -42,7 +42,8 @@ impl CanRepr for u64 {
     }
 }
 
-// Behold the magic trait which creates the frame
+/// Creates a CAN frame
+/// All the users have to do is specify `Repr`, `ID`, and `LEN`
 pub trait ToCanFrame: Sized + Into<Self::Repr> {
     type Repr: CanRepr;
 
@@ -50,14 +51,24 @@ pub trait ToCanFrame: Sized + Into<Self::Repr> {
     const LEN: usize;
 
     #[doc(hidden)]
+    /// a hack to ensure that the `Repr` is specified correctly
     const CHECK_BITS_FIT: () = assert!(
         Self::LEN <= core::mem::size_of::<Self::Repr>(),
         "BITS exceeds the backing integer's width"
     );
 
+    #[doc(hidden)]
+    /// a hack to ensure that the `Repr` and `LEN` are 8 bytes or less (CAN 2.0)
+    const CHECK_LEN: () = assert!(
+        Self::LEN <= 8 && core::mem::size_of::<Self::Repr>() <= 8,
+        "BITS exceeds the backing integer's width"
+    );
+
     fn to_can_frame<F: Frame>(self) -> F {
         let bytes = self.into().to_le_bytes();
-        F::new(Self::ID, &bytes.as_ref()[..Self::LEN]).unwrap()
+        // this is guarranteed in bounds by the `CHECK_BITS_FIT`
+        // SAFETY: this is guarranteed to be within the size of a CAN frame by `CHECK_LEN`
+        unsafe { F::new(Self::ID, &bytes.as_ref()[..Self::LEN]).unwrap_unchecked() }
     }
 }
 
@@ -84,7 +95,7 @@ pub struct OutOfRange {
 /// that `generate_all_messages!` emits, e.g.
 /// `#[bits(12, from = conv::div_from_u16::<12, 10>, into = conv::div_into_u16::<12, 10>)]`.
 ///
-/// - `B` is the field width in bits (used for masking / sign-extension).
+/// - `B` is the field width in bits (used for masking / sign-extension only).
 /// - `ARG` is the formatter argument (the divisor or multiplier).
 pub mod conv {
     macro_rules! scaled {
@@ -95,10 +106,9 @@ pub mod conv {
             pub const fn $div_from<const B: u32, const ARG: u32>(bits: $u) -> f32 {
                 bits as f32 / ARG as f32
             }
-            /// Saturates the raw count to `[0, 2^B - 1]`, so an out-of-range
-            /// physical value pins to the field's max instead of wrapping or
-            /// panicking. The clamped result is always within the `#[bits(B)]`
+            /// The clamped result is always within the `#[bits(B)]`
             /// range, so `bitfield_struct`'s bounds check never fires.
+            /// This is why a custom try is needed
             pub const fn $div_into<const B: u32, const ARG: u32>(v: f32) -> $u {
                 let hi = (<$u>::MAX >> ($w - B)) as f32;
                 let raw = v * ARG as f32;
@@ -248,4 +258,5 @@ struct ExampleDoNotUse {
     _2: u16,
 }
 
+// entrypoint to macro.  All expanded code must be no_std
 generate_all_messages!();
