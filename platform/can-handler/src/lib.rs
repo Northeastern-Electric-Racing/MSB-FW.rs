@@ -159,7 +159,7 @@ pub async fn can_handler(
             Either::Second(res) => match res {
                 Ok(can_recv) => {
                     let frame = can_recv.frame;
-                    let _ = sender.send(frame);
+                    let _ = sender.send(frame).await;
                 }
                 Err(err) => warn!("Bus error! {}", err),
             },
