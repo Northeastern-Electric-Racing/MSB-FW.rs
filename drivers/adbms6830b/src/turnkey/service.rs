@@ -143,20 +143,16 @@ impl StartupResult {
     pub const fn is_incomplete(&self) -> bool { matches!(self, StartupResult::Incomplete) }
 }
 
-pub struct Service<SPI: SpiDevice, OnStartup: AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult, const N: usize> {
+pub struct Service<SPI: SpiDevice, const N: usize> {
     api: Api<SPI, N>,
-    
+
     /// The config this service holds. this is never meant to be mutated after
     /// construction time. The fields are all public tho so the user can declare the
     /// config with the nice declarative syntax. Just internally, service.rs isn't supposed to
     /// modify the config after we store it
     service_config: service_config::ServiceConfig,
 
-    /// Closure the service runs during startup.
-    on_startup: OnStartup,
-
-    
-    accumulator: Accumulator::<N>,
+    accumulator: Accumulator<N>,
     sleep_detection_spi_error_count: usize,
     cycles_count: usize,
     break_detection_spi_error_count: usize,
@@ -204,29 +200,16 @@ impl StartupReason {
     pub const fn is_from_sleep(&self) -> bool { matches!(&self, StartupReason::FromSleep) }
 }
 
-impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult> Service<SPI, OnStartup, N> {
+impl<SPI: SpiDevice, const N: usize> Service<SPI, N> {
     /// Creates a new service.
     /// ### Parameters
     /// - `line_a`: `Line` instance representing Line A.
     /// - `line_b`: `Line` instance representing Line B.
     /// - `service_config`: High-level service configuration settings in regards to how it runs.
-    /// - `on_startup`: This is a closure that provides an `Api` for a startup routine. You are able to dispatch any commands/configs you want for your startup profile here. It is recommended to set ConfigA/ConfigB here. This closure will
-    /// be invoked at boot time, and any time the system needs to be re-initialized following a sleep or isoSPI recovery.
-    /// 
-    /// This closure also provides a `StartupReason`, which tells you why specifically `on_startup` was invoked by the service. This is useful in case you want to have different behavior depending
-    /// on the context.
-    /// 
-    /// This closure must return a `StartupResult`. This allows the application to inform the Service of the outcome of the startup logic. If you return `StartupResult::Complete`, the Service will
-    /// treat startup as finished, and will not call `on_startup` again unless sleep detection/isoSPI recovery occurs. If you return `StartupResult::Incomplete`, the Service will consider startup as not being finished
-    /// yet, and will try calling `on_startup` again on the next cycle. The Service will continue calling `on_startup` on each cycle until it returns `StartupResult::Complete`.
-    /// 
-    /// It's ultimately up to the application to decide what they consider `Complete` versus `Incomplete` startup. Generally, if a SPI error or something came back during startup and your commands weren't actually written, it probably counts as
-    /// StartupResult::Incomplete.
-    pub const fn new(line_a: Line<SPI, N>, line_b: Line<SPI, N>, service_config: service_config::ServiceConfig, on_startup: OnStartup) -> Self {
+    pub const fn new(line_a: Line<SPI, N>, line_b: Line<SPI, N>, service_config: service_config::ServiceConfig) -> Self {
         Self {
             api: Api::new(line_a, line_b),
             service_config,
-            on_startup,
             accumulator: Accumulator::<N>::new(service_config),
             sleep_detection_spi_error_count: 0,
             cycles_count: 0,
@@ -242,9 +225,25 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
     }
 
     /// Runs the Service. This will return the cycle's `ServiceDiagnostics` each time you call it.
-    /// 
+    ///
     /// This is meant to be called at a consistent frequency by the application.
-    pub async fn run(&mut self) -> ServiceDiagnostics<N> {
+    ///
+    /// ### Parameters
+    /// - `on_startup`: This is a closure that provides an `Api` for a startup routine. You are able to dispatch any commands/configs you want for your startup profile here. It is recommended to set ConfigA/ConfigB here. This closure will
+    /// be invoked at boot time, and any time the system needs to be re-initialized following a sleep or isoSPI recovery.
+    ///
+    /// This closure also provides a `StartupReason`, which tells you why specifically `on_startup` was invoked by the service. This is useful in case you want to have different behavior depending
+    /// on the context.
+    ///
+    /// This closure must return a `StartupResult`. This allows the application to inform the Service of the outcome of the startup logic. If you return `StartupResult::Complete`, the Service will
+    /// treat startup as finished, and will not call `on_startup` again unless sleep detection/isoSPI recovery occurs. If you return `StartupResult::Incomplete`, the Service will consider startup as not being finished
+    /// yet, and will try calling `on_startup` again on the next cycle. The Service will continue calling `on_startup` on each cycle until it returns `StartupResult::Complete`.
+    ///
+    /// It's ultimately up to the application to decide what they consider `Complete` versus `Incomplete` startup. Generally, if a SPI error or something came back during startup and your commands weren't actually written, it probably counts as
+    /// StartupResult::Incomplete.
+    ///
+    /// Important note: You are expected to pass the same closure here every call.
+    pub async fn run(&mut self, mut on_startup: impl AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult) -> ServiceDiagnostics<N> {
         let run_started_timestamp = Instant::now(); // timestamp at the start of run
         let period = self.previous_run_timestamp.map(|prev| run_started_timestamp.saturating_duration_since(prev));
         self.previous_run_timestamp = Some(run_started_timestamp);
@@ -261,7 +260,7 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
                     self.startups_overtaken_by_another_startup_counts += 1;
                 }
                 self.startup_reason = rsn;
-                (self.on_startup)(&mut self.api, self.startup_reason).await
+                on_startup(&mut self.api, self.startup_reason).await
             }};
         }
 
@@ -389,7 +388,7 @@ enum SleepDetectionResult {
 /// # Helpers
 /// 
 /// Internal helpers for the service.
-impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult> Service<SPI, OnStartup, N> {
+impl<SPI: SpiDevice, const N: usize> Service<SPI, N> {
     /// PRIVATE! Logic for when a break has been detected.
     /// 
     /// This should be called when a break is detected. `break_chip_index` should be
