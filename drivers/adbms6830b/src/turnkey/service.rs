@@ -21,13 +21,9 @@ use super::{
     diagnostics::{ChipStateDiagnostics, TimingDiagnostics},
     accumulator::{Accumulator, UpdateResult},
 };
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use core::cell::Cell;
 
 /// Configuration parameters for the Service. This also includes constant defaults.
 pub mod service_config {
-    /// Default value for [ServiceConfig::service_frequency_ms].
-    pub const SERVICE_FREQUENCY_MS: u64 = 300;
     /// Default value for [ServiceConfig::segment_isospi_eval_period_ms].
     pub const SEGMENT_ISOSPI_EVAL_PERIOD_MS: u64 = 4000;
     /// Default value for [ServiceConfig::segment_isospi_min_attempts_for_fail].
@@ -47,10 +43,6 @@ pub mod service_config {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ServiceConfig {
-        /// How often the service should run, in ms.
-        /// 
-        /// This defaults to [SERVICE_FREQUENCY_MS] when you use `ServiceConfig::default()`.
-        pub service_frequency_ms: u64,
         /// PEC accumulator setting! How long each evaluation window lasts.
         /// 
         /// This defaults to [SEGMENT_ISOSPI_EVAL_PERIOD_MS] when you use `ServiceConfig::default()`.
@@ -94,7 +86,7 @@ pub mod service_config {
         /// This defaults to [SEGMENT_ISOSPI_MIN_ATTEMPTS_TO_OPEN_WINDOW] when you use `ServiceConfig::default()`.
         /// 
         /// ### WARNING:
-        /// This should be set quite low. If you set this higher than the number of reads your application sends within `service_frequency_ms`, you may end up blocking
+        /// This should be set quite low. If you set this higher than the number of reads your application sends within a service loop, you may end up blocking
         /// the Service from ever opening an isoSPI recovery detection window. So, the safest value is probably something like 1 or 2. It should be set right above the PEC error sum noise level per cycle.
         /// 
         /// Note: If you are unsure of the frequency at which your application makes read attempts during a PEC window, or you want to double-check that
@@ -124,7 +116,6 @@ pub mod service_config {
     impl Default for ServiceConfig {
         fn default() -> Self {
             Self {
-                service_frequency_ms: SERVICE_FREQUENCY_MS,
                 segment_isospi_eval_period_ms: SEGMENT_ISOSPI_EVAL_PERIOD_MS,
                 segment_isospi_min_attempts_for_fail: SEGMENT_ISOSPI_MIN_ATTEMPTS_FOR_FAIL,
                 segment_isospi_pec_failure_ratio_pct: SEGMENT_ISOSPI_PEC_FAILURE_RATIO_PCT,
@@ -156,30 +147,17 @@ impl StartupResult {
     pub const fn is_incomplete(&self) -> bool { matches!(self, StartupResult::Incomplete) }
 }
 
-pub struct Service<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> {
-    api: embassy_sync::mutex::Mutex<MUTEX, Api<SPI, N>>,
-    diagnostics: embassy_sync::blocking_mutex::Mutex<MUTEX, Cell<Option<ServiceDiagnostics<N>>>>,
+pub struct Service<SPI: SpiDevice, OnStartup: AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult, const N: usize> {
+    api: Api<SPI, N>,
     
     /// The config this service holds. this is never meant to be mutated after
     /// construction time. The fields are all public tho so the user can declare the
     /// config with the nice declarative syntax. Just internally, service.rs isn't supposed to
     /// modify the config after we store it
     service_config: service_config::ServiceConfig,
-}
 
-/// Chip configuration methods.
-impl <MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
-    /// Lets you configure the ConfigA register.
-    pub async fn set_configa(&self, configs: &[ConfigA; N]) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.set_configa(configs).await
-    }
-
-    /// Lets you configure the ConfigB register.
-    pub async fn set_configb(&self, configs: &[ConfigB; N]) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.set_configb(configs).await
-    }
+    /// Closure the service runs during startup.
+    on_startup: OnStartup,
 }
 
 /// Reason why the Service has invoked `on_startup`.
@@ -208,36 +186,13 @@ impl StartupReason {
     pub const fn is_from_sleep(&self) -> bool { matches!(&self, StartupReason::FromSleep) }
 }
 
-impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
+impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult> Service<SPI, OnStartup, N> {
     /// Creates a new service.
     /// ### Parameters
     /// - `line_a`: `Line` instance representing Line A.
     /// - `line_b`: `Line` instance representing Line B.
     /// - `service_config`: High-level service configuration settings in regards to how it runs.
-    pub const fn new(line_a: Line<SPI, N>, line_b: Line<SPI, N>, service_config: service_config::ServiceConfig) -> Self {
-        Self {
-            api: embassy_sync::mutex::Mutex::new(Api::new(line_a, line_b)),
-            diagnostics: embassy_sync::blocking_mutex::Mutex::new(Cell::new(None)),
-            service_config,
-        }
-    }
-
-    /// Runs the Service. This will provide the cycle's `ServiceDiagnostics` to `on_diagnostics` each time.
-    /// 
-    /// # PARAMETERS
-    /// ### `on_diagnostics`:
-    /// This is a closure that provides a read-only `ServiceDiagnostics`, which reports various diagnostics each time the service runs.
-    /// The Service calls this closure every cycle. 
-    /// 
-    /// You can still access the diagnostics via the `.diagnostics()` method on `Service`, but this closure
-    /// is useful if you want to access the diagnostics and run subsequent code at the same exact frequency the service
-    /// is running (makes timing easier sometimes).
-    /// 
-    /// Also, whatever you put in the closures can affect the frequency of the service if there's a lot
-    /// of awaiting going on.
-    /// 
-    /// ### `on_startup`:
-    /// This is a closure that provides an `Api` for a startup routine. You are able to dispatch any commands/configs you want for your startup profile here. It is recommended to set ConfigA/ConfigB here. This closure will
+    /// - `on_startup`: This is a closure that provides an `Api` for a startup routine. You are able to dispatch any commands/configs you want for your startup profile here. It is recommended to set ConfigA/ConfigB here. This closure will
     /// be invoked at boot time, and any time the system needs to be re-initialized following a sleep or isoSPI recovery.
     /// 
     /// This closure also provides a `StartupReason`, which tells you why specifically `on_startup` was invoked by the service. This is useful in case you want to have different behavior depending
@@ -249,9 +204,18 @@ impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
     /// 
     /// It's ultimately up to the application to decide what they consider `Complete` versus `Incomplete` startup. Generally, if a SPI error or something came back during startup and your commands weren't actually written, it probably counts as
     /// StartupResult::Incomplete.
+    pub const fn new(line_a: Line<SPI, N>, line_b: Line<SPI, N>, service_config: service_config::ServiceConfig, on_startup: OnStartup) -> Self {
+        Self {
+            api: Api::new(line_a, line_b),
+            service_config,
+            on_startup,
+        }
+    }
+
+    /// Runs the Service. This will return the cycle's `ServiceDiagnostics` to `on_diagnostics` each time.
     /// 
-    /// Also, the StartupResult from each service cycle is reported inside the diagnostics.
-    pub async fn run(&self, mut on_diagnostics: impl AsyncFnMut(&ServiceDiagnostics<N>), mut on_startup: impl AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult) -> ! {
+    /// This is meant to be called at a consistent frequency by the application.
+    pub async fn run(&mut self) -> ServiceDiagnostics<N> {
         // The runner is the only thing that uses this so it doesn't need to be part of `Service`.
         let mut accumulator = Accumulator::<N>::new(self.service_config);
 
@@ -262,10 +226,7 @@ impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
         // stuff for calculating how often the service runs actually
         let mut previous_loop_timestamp: Option<Instant> = None; // timestamp the service loop last ran
         let mut max_period = Duration::MIN; // the highest period between two service loops we have observed so far
-        let mut max_lock_wait = Duration::MIN; // the highest wait time we have observed between a Service loop starting and us actually getting the mutex
         let mut max_work = Duration::MIN; // the highest time we have observed the work of the service loop taking
-
-        let mut diagnostics: ServiceDiagnostics<N>;
 
         let mut startup_result = StartupResult::Incomplete;
         let mut startup_reason = StartupReason::FromSleep;
@@ -276,241 +237,133 @@ impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
         // counts how many times a startup for another reason was triggered before the current startup could finish. for diagnostics.
         let mut startups_overtaken_by_another_startup_counts: usize = 0;
 
-        loop {
-            let loop_started_timestamp = Instant::now(); // timestamp at the start of loop
-            let period = previous_loop_timestamp.map(|prev| loop_started_timestamp.saturating_duration_since(prev));
-            previous_loop_timestamp = Some(loop_started_timestamp);
-            if let Some(period) = period {
-                max_period = max_period.max(period);
+        let loop_started_timestamp = Instant::now(); // timestamp at the start of loop
+        let period = previous_loop_timestamp.map(|prev| loop_started_timestamp.saturating_duration_since(prev));
+        previous_loop_timestamp = Some(loop_started_timestamp);
+        if let Some(period) = period {
+            max_period = max_period.max(period);
+        }
+
+        // helper macro for calling on_startup but also increasing the counters and stuff
+        macro_rules! call_on_startup {
+            ($rsn:expr) => {{
+                let rsn = $rsn;
+                startups_count += 1;
+                if startup_result.is_incomplete() && rsn != startup_reason {
+                    startups_overtaken_by_another_startup_counts += 1;
+                }
+                startup_reason = rsn;
+                (self.on_startup)(&mut self.api, startup_reason).await
+            }};
+        }
+
+        // AREA WHERE WE DO THE ACTUAL WORK OF THE SERVICE LOOP
+
+        let work_start_timestamp = embassy_time::Instant::now();
+
+        // if we are still in StartupResult::Incomplete, we need to call on_startup
+        if startup_result.is_incomplete() {
+            // startup_reason is whatever it already is, since this area is reached either on boot when it is the first Service cycle, or after a startup loop has previously been started and just failed last time
+            startup_result = call_on_startup!(startup_reason);
+        }
+
+        // this should run first so the sleep detection reads count towards the accumulator update break detection
+        match self.handle_sleep_detection().await {
+            Ok(result) => match result {
+                SleepDetectionResult::SleepDetected => {
+                    // sleep was detected so we need to start up a PEC mask
+                    accumulator.set_masked();
+                    // we also must call on_startup
+                    startup_result = call_on_startup!(StartupReason::FromSleep);
+                },
+                SleepDetectionResult::SleepNotDetected => {
+                    // don't need to do anything since this is normal
+                },
+            },
+            Err(_err) => {
+                sleep_detection_spi_error_count += 1;
+                #[cfg(feature = "defmt")]
+                // we need to use `Debug2Format` because `Error<SPI::Error>` only implements `Format` when the
+                // SPI error type does, and we can't gaurauntee that the SPI error type will. `Debug` is guaranteed tho
+                // since `embedded_hal::spi::Error` requires it.
+                defmt::error!("ADBMS6830B: Service: `handle_sleep_detection()` failed with error: {}", defmt::Debug2Format(&_err));
             }
+        }
 
-            {
-                let mut api = self.api.lock().await;
+        let chips = *&mut self.api.chips();
 
-                // helper macro for calling on_startup but also increasing the counters and stuff
-                macro_rules! call_on_startup {
-                    ($rsn:expr) => {{
-                        let rsn = $rsn;
-                        startups_count += 1;
-                        if startup_result.is_incomplete() && rsn != startup_reason {
-                            startups_overtaken_by_another_startup_counts += 1;
-                        }
-                        startup_reason = rsn;
-                        on_startup(&mut api, startup_reason).await
-                    }};
-                }
-
-                let locked_at_timestamp = Instant::now(); // timestamp at which we locked the mutex
-                let lock_wait = locked_at_timestamp.saturating_duration_since(loop_started_timestamp);
-                max_lock_wait = max_lock_wait.max(lock_wait);
-
-                // AREA WHERE WE DO THE ACTUAL WORK OF THE SERVICE LOOP
-
-                // if we are still in StartupResult::Incomplete, we need to call on_startup
-                if startup_result.is_incomplete() {
-                    // startup_reason is whatever it already is, since this area is reached either on boot when it is the first Service cycle, or after a startup loop has previously been started and just failed last time
-                   startup_result = call_on_startup!(startup_reason);
-                }
-
-                // this should run first so the sleep detection reads count towards the accumulator update break detection
-                match self.handle_sleep_detection(&mut api).await {
-                    Ok(result) => match result {
-                        SleepDetectionResult::SleepDetected => {
-                            // sleep was detected so we need to start up a PEC mask
-                            accumulator.set_masked();
-                            // we also must call on_startup
-                            startup_result = call_on_startup!(StartupReason::FromSleep);
-                        },
-                        SleepDetectionResult::SleepNotDetected => {
-                            // don't need to do anything since this is normal
-                        },
-                    },
+        let (update_result, accumulator_diagnostics) = accumulator.update(&chips);
+        match update_result {
+            UpdateResult::BreakDetected { break_chip_index } => {
+                let applied = match self.handle_break_detected(break_chip_index).await {
+                    Ok(()) => true,
                     Err(_err) => {
-                        sleep_detection_spi_error_count += 1;
+                        break_detection_spi_error_count += 1;
                         #[cfg(feature = "defmt")]
                         // we need to use `Debug2Format` because `Error<SPI::Error>` only implements `Format` when the
                         // SPI error type does, and we can't gaurauntee that the SPI error type will. `Debug` is guaranteed tho
                         // since `embedded_hal::spi::Error` requires it.
-                        defmt::error!("ADBMS6830B: Service: `handle_sleep_detection()` failed with error: {}", defmt::Debug2Format(&_err));
+                        defmt::error!("ADBMS6830B: Service: `handle_break_detection()` failed with error: {}", defmt::Debug2Format(&_err));
+                        false
                     }
-                }
-
-                let chips = *api.chips();
-
-                let (update_result, accumulator_diagnostics) = accumulator.update(&chips);
-                match update_result {
-                    UpdateResult::BreakDetected { break_chip_index } => {
-                        let applied = match self.handle_break_detected(&mut api, break_chip_index).await {
-                            Ok(()) => true,
-                            Err(_err) => {
-                                break_detection_spi_error_count += 1;
-                                #[cfg(feature = "defmt")]
-                                // we need to use `Debug2Format` because `Error<SPI::Error>` only implements `Format` when the
-                                // SPI error type does, and we can't gaurauntee that the SPI error type will. `Debug` is guaranteed tho
-                                // since `embedded_hal::spi::Error` requires it.
-                                defmt::error!("ADBMS6830B: Service: `handle_break_detection()` failed with error: {}", defmt::Debug2Format(&_err));
-                                false
-                            }
-                        };
-                        // report back to the accumulator if the split was successful or not so it know if it needs to keep trying or can move on
-                        accumulator.was_split_applied(applied);
-
-                        // no matter what if a break is detected, we have to re-init everything (this is what tsecu-shepherd does)
-                        // if `applied` from above is `false` this is probably a bit pointless since this will get retried anyway, however this is useful to have just in case
-                        startup_result = call_on_startup!(StartupReason::IsospiBreak);
-                    },
-                    UpdateResult::Okay => {},
-                }
-
-                use super::api::LineId;
-                let line_a_chip_detection = api.detect_chips(LineId::A).await.map_err(|err| err.to_kind());
-                let line_b_chip_detection = api.detect_chips(LineId::B).await.map_err(|err| err.to_kind());
-
-                // END AREA WHERE WE DO THE ACTUAL WORK OF THE SERVICE LOOP
-
-                let work = Instant::now().saturating_duration_since(locked_at_timestamp);
-                max_work = max_work.max(work);
-
-                // this is counted before we update the diagnostics so the diagnostics include the cycle being reported!!
-                cycles_count += 1;
-                
-                diagnostics = ServiceDiagnostics {
-                    accumulator_diagnostics: accumulator_diagnostics,
-                    timing_diagnostics: TimingDiagnostics {
-                        period, max_period, work, max_work, lock_wait, max_lock_wait, service_frequency: self.service_config.service_frequency_ms,
-                    },
-                    chip_state_diagnostics: ChipStateDiagnostics {
-                        // this calls `*api.chips()` again instead of just using the already-read `chips`
-                        // to make sure the diagnostics gets the absolute final ChipState at the end of the
-                        // Service cycle
-                        chip_state: *api.chips(),
-                        chip_line: core::array::from_fn(|i| api.line_of(i)),
-                    },
-                    line_diagnostics: LineDiagnostics {
-                        line_a_error_count: api.line_a_error_count,
-                        most_recent_line_a_error: api.most_recent_line_a_error,
-                        line_b_error_count: api.line_b_error_count,
-                        most_recent_line_b_error: api.most_recent_line_b_error,
-                        line_a_chips_detected_count: line_a_chip_detection,
-                        line_b_chips_detected_count: line_b_chip_detection,
-                    },
-                    split: api.split(),
-                    sleep_detection_spi_error_count,
-                    break_detection_spi_error_count,
-                    cycles_count,
-                    segment_isospi_max_split_attempts: self.service_config.segment_isospi_max_split_attempts,
-                    segment_isospi_max_failed_verification_attempts: self.service_config.segment_isospi_max_failed_verification_attempts,
-                    startup_reason: startup_reason,
-                    startup_result: startup_result,
-                    startups_count: startups_count,
-                    startups_overtaken_by_another_startup_counts: startups_overtaken_by_another_startup_counts,
                 };
+                // report back to the accumulator if the split was successful or not so it know if it needs to keep trying or can move on
+                accumulator.was_split_applied(applied);
 
-                // update service diagnostics
-                self.diagnostics.lock(|cell| cell.set(Some(diagnostics)));
-            }
+                // no matter what if a break is detected, we have to re-init everything (this is what tsecu-shepherd does)
+                // if `applied` from above is `false` this is probably a bit pointless since this will get retried anyway, however this is useful to have just in case
+                startup_result = call_on_startup!(StartupReason::IsospiBreak);
+            },
+            UpdateResult::Okay => {},
+        }
 
-            // the mutex gaurd is dropped by this point! so we can call the closure
-            on_diagnostics(&diagnostics).await;
+        use super::api::LineId;
+        let line_a_chip_detection = &mut self.api.detect_chips(LineId::A).await.map_err(|err| err.to_kind());
+        let line_b_chip_detection = &mut self.api.detect_chips(LineId::B).await.map_err(|err| err.to_kind());
 
-            Timer::after(Duration::from_millis(self.service_config.service_frequency_ms)).await
+        // END AREA WHERE WE DO THE ACTUAL WORK OF THE SERVICE LOOP
+
+        let work = Instant::now().saturating_duration_since(work_start_timestamp);
+        max_work = max_work.max(work);
+
+        // this is counted before we update the diagnostics so the diagnostics include the cycle being reported!!
+        cycles_count += 1;
+        
+        ServiceDiagnostics {
+            accumulator_diagnostics: accumulator_diagnostics,
+            timing_diagnostics: TimingDiagnostics {
+                period, max_period, work, max_work,
+            },
+            chip_state_diagnostics: ChipStateDiagnostics {
+                // this calls `*api.chips()` again instead of just using the already-read `chips`
+                // to make sure the diagnostics gets the absolute final ChipState at the end of the
+                // Service cycle
+                chip_state: *self.api.chips(),
+                chip_line: core::array::from_fn(|i| self.api.line_of(i)),
+            },
+            line_diagnostics: LineDiagnostics {
+                line_a_error_count: self.api.line_a_error_count,
+                most_recent_line_a_error: self.api.most_recent_line_a_error,
+                line_b_error_count: self.api.line_b_error_count,
+                most_recent_line_b_error: self.api.most_recent_line_b_error,
+                line_a_chips_detected_count: *line_a_chip_detection,
+                line_b_chips_detected_count: *line_b_chip_detection,
+            },
+            split: self.api.split(),
+            sleep_detection_spi_error_count,
+            break_detection_spi_error_count,
+            cycles_count,
+            segment_isospi_max_split_attempts: self.service_config.segment_isospi_max_split_attempts,
+            segment_isospi_max_failed_verification_attempts: self.service_config.segment_isospi_max_failed_verification_attempts,
+            startup_reason: startup_reason,
+            startup_result: startup_result,
+            startups_count: startups_count,
+            startups_overtaken_by_another_startup_counts: startups_overtaken_by_another_startup_counts,
         }
     }
 
-    /// Reads the Service's current `ServiceDiagnostics`. This provides various
-    /// diagnostic and debugging information about the current state of the Service.
-    /// 
-    /// This will return `None` if the service has not run yet.
-    /// 
-    /// Note: The Service's `ServiceDiagnostics` gets updated each time the service runs (see `SERVICE_FREQUENCY_MS`).
-    /// If you want instantaneous chip data (i.e., data that is fetched exactly as you call the function), the `.chips()` function may be of interest.
-    pub fn diagnostics(&self) -> Option<ServiceDiagnostics<N>> {
-        self.diagnostics.lock(|cell| cell.get())
-    }
-}
-
-/// # Interaction
-/// 
-/// This impl block contains the methods that let users send commands to the
-/// API. For context: `.run()` just manages the isoSPI detection, recovery, and split
-/// state stuff. The actual data gathering and configuration is still managed by the user.
-/// These functions allow the user to send different commands at their own frequencies as
-/// required by their specific application.
-/// 
-/// These functions exist (rather than just exposing the raw `api` directly) mainly
-/// just to bound the lifetime of the mutex. If callers were the ones managing the
-/// MutexGaurd directly they might accidentally hold it for too long or something. So
-/// this provides a nice grouping of all the places the mutex is locked.
-impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
-    /// Wakes every chip on both lines out of the idle or sleep state.
-    ///
-    /// Chips that were asleep come back with their counters at 0.
-    pub async fn wakeup(&self) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.wakeup().await
-    }
-
-    /// Reads a register group from every chip.
-    pub async fn read<G: ReadableGroup>(&self) -> Responses<G, SPI::Error, N> {
-        let mut api = self.api.lock().await;
-        api.read().await
-    }
-
-    /// Writes one register group per chip. `groups` is indexed in logical chip order.
-    pub async fn write<G: writeables::AppWritableGroup>(&self, groups: &[G; N]) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.write(groups).await
-    }
-
-    /// Sends a command to every chip on both lines.
-    pub async fn command(&self, command: commands::Command) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.command(command).await
-    }
-
-    /// Sends a poll command to both lines and reports whether every chip has finished.
-    ///
-    /// This does not wait! It just returns a bool, so you need to keep polling it until it returns true (indicating that every chip has finished).
-    /// If you want that done automatically for you, see the `*_autoconvert()` helpers.
-    pub async fn poll(&self, command: commands::Command) -> Result<bool, Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.poll(command).await
-    }
-
-    /// Starts a cell voltage conversion (ADCV) and waits for it to finish.
-    pub async fn adcv_autoconvert(&self, redundancy: commands::adc::AdcvRedundancy, acquisition: commands::adc::AutoAcquisition, reset_filter: commands::adc::ResetFilter, open_wire: commands::adc::OpenWire, timeout_ms: u64) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.adcv_autoconvert(redundancy, acquisition, reset_filter, open_wire, timeout_ms).await
-    }
-
-    /// Starts an S-ADC conversion (ADSV) and waits for it to finish.
-    pub async fn adsv_autoconvert(&self, acquisition: commands::adc::AutoAcquisition, open_wire: commands::adc::OpenWire, timeout_ms: u64) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.adsv_autoconvert(acquisition, open_wire, timeout_ms).await
-    }
-
-    /// Starts an AUX conversion (ADAX) and waits for it to finish.
-    /// 
-    /// This doesn't account for time added by SOAKON (see Config A). It should still work if SOAKON is
-    /// enabled, it just might not be as efficient since it will poll at the same frequency as when SOAKON
-    /// is not enabled.
-    pub async fn adax_autoconvert(&self, open_wire: commands::adc::OpenWireAux, pull: commands::adc::Pull, channel: commands::adc::Aux1InputSelection, timeout_ms: u64, ) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.adax_autoconvert(open_wire, pull, channel, timeout_ms).await
-    }
-
-    /// Starts an AUX2 conversion (ADAX2) and waits for it to finish.
-    pub async fn adax2_autoconvert(&self, channel: commands::adc::Aux2InputSelection, timeout_ms: u64) -> Result<(), Error<SPI::Error>> {
-        let mut api = self.api.lock().await;
-        api.adax2_autoconvert(channel, timeout_ms).await
-    }
-
-    /// Per-chip metadata.
-    pub async fn chips(&self) -> [ChipState; N] {
-        let mut api = self.api.lock().await;
-        let copy: [ChipState; N] = *api.chips();
-        copy
-    }
+    /// Provides exclusive access to the inner `Api`.
+    pub const fn api(&mut self) -> &mut Api<SPI, N> { &mut self.api }
 }
 
 /// Private! Contains the results for a `handle_sleep_detection()` call.
@@ -528,12 +381,14 @@ enum SleepDetectionResult {
 /// # Helpers
 /// 
 /// Internal helpers for the service.
-impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
+impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, StartupReason) -> StartupResult> Service<SPI, OnStartup, N> {
     /// PRIVATE! Logic for when a break has been detected.
     /// 
     /// This should be called when a break is detected. `break_chip_index` should be
     /// passed in here.
-    async fn handle_break_detected(&self, api: &mut Api<SPI, N>, break_chip_index: usize) -> Result<(), Error<SPI::Error>> {
+    async fn handle_break_detected(&mut self, break_chip_index: usize) -> Result<(), Error<SPI::Error>> {
+        let api = &mut self.api;
+
         match api.split_at(OnLineA(break_chip_index)).await {
             Ok(()) => {
                 #[cfg(feature = "defmt")] {
@@ -557,11 +412,13 @@ impl<MUTEX: RawMutex, SPI: SpiDevice, const N: usize> Service<MUTEX, SPI, N> {
     }
 
     /// PRIVATE! Detects chips that have slept.
-    async fn handle_sleep_detection(&self, api: &mut Api<SPI, N>) -> Result<SleepDetectionResult, Error<SPI::Error>> {
+    async fn handle_sleep_detection(&mut self) -> Result<SleepDetectionResult, Error<SPI::Error>> {
         use crate::chip::registers:: {
             status::StatusC,
             status::types::c::SleepModeDetection,
         };
+
+        let api = &mut self.api;
 
         // RDSTATC doesn't increment the command counter, so this doesn't perturb what we're measuring.
         let mut statuses = api.read::<StatusC>().await;

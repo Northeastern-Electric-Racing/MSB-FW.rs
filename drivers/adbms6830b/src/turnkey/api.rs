@@ -393,7 +393,7 @@ impl<SPI, const N: usize> defmt::Format for Api<SPI, N> {
 
 impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
     /// Builds a Api. This defaults to every chip routed to line A.
-    pub const fn new(line_a: Line<SPI, N>, line_b: Line<SPI, N>) -> Self {
+    pub(crate) const fn new(line_a: Line<SPI, N>, line_b: Line<SPI, N>) -> Self {
         Self {
             line_a,
             line_b,
@@ -453,7 +453,7 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
     }
 
     /// Which line a chip is currently reached from.
-    pub fn line_of(&self, chip: usize) -> LineId {
+    pub(crate) fn line_of(&self, chip: usize) -> LineId {
         if chip < self.on_line_a.into() {
             LineId::A
         } else {
@@ -543,7 +543,7 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
     }
 
     /// Reads a register group from every chip.
-    pub(crate) async fn read<G: ReadableGroup>(&mut self) -> Responses<G, SPI::Error, N> {
+    pub async fn read<G: ReadableGroup>(&mut self) -> Responses<G, SPI::Error, N> {
         let line_a = self.read_line::<G>(LineId::A).await;
         let line_b = self.read_line::<G>(LineId::B).await;
 

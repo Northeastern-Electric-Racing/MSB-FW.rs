@@ -230,8 +230,7 @@ impl<const N: usize> AccumulatorDiagnostics<N> {
 pub struct TimingDiagnostics {
     /// The difference in time between the most recent Service cycle, and the Service cycle before that.
     /// 
-    /// This should generally be around the configured `SERVICE_FREQUENCY_MS`, but will be slightly longer
-    /// due to the time spend awaiting (either during SPI transiactions or waiting for the mutex).
+    /// This should generally be around the frequency at which you run the service, but may be slightly longer.
     /// 
     /// If only zero or one Service cycles have ran yet, this will be None.
     pub(crate) period: Option<Duration>,
@@ -240,29 +239,17 @@ pub struct TimingDiagnostics {
     /// This starts out as zero until the Service has ran a few times.
     pub(crate) max_period: Duration,
     /// How long the "work" of the Service took during the most recent Service cycle.
-    /// "work" is defined as everything the Service actually does after getting the mutex (i.e., sleep detection, isoSPI break detection, etc)
+    /// "work" is defined as everything the Service actually does while running (i.e., sleep detection, isoSPI break detection, etc).
     pub(crate) work: Duration,
     /// The maximum `work` the Service has observed while running.
     /// 
     /// This starts out as zero until the Service has ran a few times.
     pub(crate) max_work: Duration,
-    /// How long the Service waited to acquire the mutex during the most recent cycle.
-    pub(crate) lock_wait: Duration,
-    /// The maximum `lock_wait` the Service has observed while running.
-    /// 
-    /// This starts out as zero until the Service has ran a few times.
-    pub(crate) max_lock_wait: Duration,
-    /// The configured service frequency. This represents how long the Service waits after a cycleto wake up an run again.
-    /// 
-    /// This is a const value! It literally is just an echo of `service_frequency_ms` from the config. This
-    /// is reported as a diagnostic for convinience, so it can be compared with the actual period reported by this struct.
-    pub(crate) service_frequency: u64,
 }
 impl TimingDiagnostics {
     /// The difference in time between the most recent Service cycle, and the Service cycle before that.
     /// 
-    /// This should generally be around the configured `SERVICE_FREQUENCY_MS`, but will be slightly longer
-    /// due to the time spend awaiting (either during SPI transiactions or waiting for the mutex).
+    /// This should generally be around the frequency at which you run the service, but will be slightly longer.
     /// 
     /// If only zero or one Service cycles have ran yet, this will be None.
     pub const fn period(&self) -> Option<Duration> { self.period }
@@ -271,23 +258,12 @@ impl TimingDiagnostics {
     /// This starts out as zero until the Service has ran a few times.
     pub const fn max_period(&self) -> Duration { self.max_period }
     /// How long the "work" of the Service took during the most recent Service cycle.
-    /// "work" is defined as everything the Service actually does after getting the mutex (i.e., sleep detection, isoSPI break detection, etc)
+    /// "work" is defined as everything the Service actually does while running (i.e., sleep detection, isoSPI break detection, etc).
     pub const fn work(&self) -> Duration { self.work }
     /// The maximum `work` the Service has observed while running.
     /// 
     /// This starts out as zero until the Service has ran a few times.
     pub const fn max_work(&self) -> Duration { self.max_work }
-    /// How long the Service waited to acquire the mutex during the most recent cycle.
-    pub const fn lock_wait(&self) -> Duration { self.lock_wait }
-    /// The maximum `lock_wait` the Service has observed while running.
-    /// 
-    /// This starts out as zero until the Service has ran a few times.
-    pub const fn max_lock_wait(&self) -> Duration { self.max_lock_wait }
-    /// The configured service frequency. This represents how long the Service waits after a cycleto wake up an run again.
-    /// 
-    /// This is a const value! It literally is just an echo of `service_frequency_ms` from the config. This
-    /// is reported as a diagnostic for convinience, so it can be compared with the actual period reported by this struct.
-    pub const fn service_frequency(&self) -> u64 { self.service_frequency }
 }
 
 /// Snapshot of per-chip diagnostics at the time the Service ran. This can help provide insight into
