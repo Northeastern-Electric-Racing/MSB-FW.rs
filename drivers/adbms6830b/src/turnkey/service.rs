@@ -5,18 +5,14 @@
 // also add detect_num_chips diagnostics for each line just because it would be interesting to see
 // maybe even add a .start() flag and a .pause() flag for the service so the sleep recovery stuff can actually be tested, and maybe even low power/sleeo mode could be used if gaf
 
-use embassy_time::{Timer, Duration, Instant};
+use embassy_time::{Duration, Instant};
 use embedded_hal_async::spi::SpiDevice;
 use crate::{
-    chip::{
-        commands, registers::{ReadableGroup, config_a::ConfigA, config_b::ConfigB},
-    }, line::{
-        Error, Line
-    }, turnkey::diagnostics::LineDiagnostics,
+    line::{Error, Line}, turnkey::diagnostics::LineDiagnostics,
 };
 use super::{
     api::{
-        Api, ChipState, OnLineA, Responses, writeables
+        Api, OnLineA,
     },
     diagnostics::{ChipStateDiagnostics, TimingDiagnostics},
     accumulator::{Accumulator, UpdateResult},
@@ -158,6 +154,28 @@ pub struct Service<SPI: SpiDevice, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Start
 
     /// Closure the service runs during startup.
     on_startup: OnStartup,
+
+    
+    accumulator: Accumulator::<N>,
+    sleep_detection_spi_error_count: usize,
+    cycles_count: usize,
+    break_detection_spi_error_count: usize,
+
+    /// Current startup state (associated with the `on_startup` closure).
+    startup_reason: StartupReason,
+    /// Most recent startup result (associated with the `on_startup` closure).
+    startup_result: StartupResult,
+
+    /// timestamp the service last ran
+    previous_run_timestamp: Option<Instant>,
+    /// the highest period between two service runs we have observed so far
+    max_period: Duration,
+    /// the highest time we have observed the work of the service run taking
+    max_work: Duration,
+    /// counts the number of times startup has run for diagnostics
+    startups_count: usize,
+    /// counts how many times a startup for another reason was triggered before the current startup could finish. for diagnostics.
+    startups_overtaken_by_another_startup_counts: usize,
 }
 
 /// Reason why the Service has invoked `on_startup`.
@@ -209,51 +227,41 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
             api: Api::new(line_a, line_b),
             service_config,
             on_startup,
+            accumulator: Accumulator::<N>::new(service_config),
+            sleep_detection_spi_error_count: 0,
+            cycles_count: 0,
+            break_detection_spi_error_count: 0,
+            startup_reason: StartupReason::FromSleep,
+            startup_result: StartupResult::Incomplete,
+            previous_run_timestamp: None,
+            max_period: Duration::MIN,
+            max_work: Duration::MIN,
+            startups_count: 0,
+            startups_overtaken_by_another_startup_counts: 0,
         }
     }
 
-    /// Runs the Service. This will return the cycle's `ServiceDiagnostics` to `on_diagnostics` each time.
+    /// Runs the Service. This will return the cycle's `ServiceDiagnostics` each time you call it.
     /// 
     /// This is meant to be called at a consistent frequency by the application.
     pub async fn run(&mut self) -> ServiceDiagnostics<N> {
-        // The runner is the only thing that uses this so it doesn't need to be part of `Service`.
-        let mut accumulator = Accumulator::<N>::new(self.service_config);
-
-        let mut sleep_detection_spi_error_count: usize = 0;
-        let mut cycles_count: usize = 0;
-        let mut break_detection_spi_error_count: usize = 0;
-
-        // stuff for calculating how often the service runs actually
-        let mut previous_loop_timestamp: Option<Instant> = None; // timestamp the service loop last ran
-        let mut max_period = Duration::MIN; // the highest period between two service loops we have observed so far
-        let mut max_work = Duration::MIN; // the highest time we have observed the work of the service loop taking
-
-        let mut startup_result = StartupResult::Incomplete;
-        let mut startup_reason = StartupReason::FromSleep;
-
-        // counts the number of times startup has run for diagnostics
-        let mut startups_count: usize = 0;
-
-        // counts how many times a startup for another reason was triggered before the current startup could finish. for diagnostics.
-        let mut startups_overtaken_by_another_startup_counts: usize = 0;
-
-        let loop_started_timestamp = Instant::now(); // timestamp at the start of loop
-        let period = previous_loop_timestamp.map(|prev| loop_started_timestamp.saturating_duration_since(prev));
-        previous_loop_timestamp = Some(loop_started_timestamp);
+        let run_started_timestamp = Instant::now(); // timestamp at the start of run
+        let period = self.previous_run_timestamp.map(|prev| run_started_timestamp.saturating_duration_since(prev));
+        self.previous_run_timestamp = Some(run_started_timestamp);
         if let Some(period) = period {
-            max_period = max_period.max(period);
+            self.max_period = self.max_period.max(period);
         }
 
         // helper macro for calling on_startup but also increasing the counters and stuff
         macro_rules! call_on_startup {
             ($rsn:expr) => {{
                 let rsn = $rsn;
-                startups_count += 1;
-                if startup_result.is_incomplete() && rsn != startup_reason {
-                    startups_overtaken_by_another_startup_counts += 1;
+                self.startups_count += 1;
+                if self.startup_result.is_incomplete() && rsn != self.startup_reason {
+                    self.startups_overtaken_by_another_startup_counts += 1;
                 }
-                startup_reason = rsn;
-                (self.on_startup)(&mut self.api, startup_reason).await
+                self.startup_reason = rsn;
+                (self.on_startup)(&mut self.api, self.startup_reason).await
             }};
         }
 
@@ -262,9 +270,9 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
         let work_start_timestamp = embassy_time::Instant::now();
 
         // if we are still in StartupResult::Incomplete, we need to call on_startup
-        if startup_result.is_incomplete() {
+        if self.startup_result.is_incomplete() {
             // startup_reason is whatever it already is, since this area is reached either on boot when it is the first Service cycle, or after a startup loop has previously been started and just failed last time
-            startup_result = call_on_startup!(startup_reason);
+            self.startup_result = call_on_startup!(self.startup_reason);
         }
 
         // this should run first so the sleep detection reads count towards the accumulator update break detection
@@ -272,16 +280,16 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
             Ok(result) => match result {
                 SleepDetectionResult::SleepDetected => {
                     // sleep was detected so we need to start up a PEC mask
-                    accumulator.set_masked();
+                    self.accumulator.set_masked();
                     // we also must call on_startup
-                    startup_result = call_on_startup!(StartupReason::FromSleep);
+                    self.startup_result = call_on_startup!(StartupReason::FromSleep);
                 },
                 SleepDetectionResult::SleepNotDetected => {
                     // don't need to do anything since this is normal
                 },
             },
             Err(_err) => {
-                sleep_detection_spi_error_count += 1;
+                self.sleep_detection_spi_error_count += 1;
                 #[cfg(feature = "defmt")]
                 // we need to use `Debug2Format` because `Error<SPI::Error>` only implements `Format` when the
                 // SPI error type does, and we can't gaurauntee that the SPI error type will. `Debug` is guaranteed tho
@@ -290,15 +298,15 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
             }
         }
 
-        let chips = *&mut self.api.chips();
+        let chips = *self.api.chips();
 
-        let (update_result, accumulator_diagnostics) = accumulator.update(&chips);
+        let (update_result, accumulator_diagnostics) = self.accumulator.update(&chips);
         match update_result {
             UpdateResult::BreakDetected { break_chip_index } => {
                 let applied = match self.handle_break_detected(break_chip_index).await {
                     Ok(()) => true,
                     Err(_err) => {
-                        break_detection_spi_error_count += 1;
+                        self.break_detection_spi_error_count += 1;
                         #[cfg(feature = "defmt")]
                         // we need to use `Debug2Format` because `Error<SPI::Error>` only implements `Format` when the
                         // SPI error type does, and we can't gaurauntee that the SPI error type will. `Debug` is guaranteed tho
@@ -308,31 +316,31 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
                     }
                 };
                 // report back to the accumulator if the split was successful or not so it know if it needs to keep trying or can move on
-                accumulator.was_split_applied(applied);
+                self.accumulator.was_split_applied(applied);
 
                 // no matter what if a break is detected, we have to re-init everything (this is what tsecu-shepherd does)
                 // if `applied` from above is `false` this is probably a bit pointless since this will get retried anyway, however this is useful to have just in case
-                startup_result = call_on_startup!(StartupReason::IsospiBreak);
+                self.startup_result = call_on_startup!(StartupReason::IsospiBreak);
             },
             UpdateResult::Okay => {},
         }
 
         use super::api::LineId;
-        let line_a_chip_detection = &mut self.api.detect_chips(LineId::A).await.map_err(|err| err.to_kind());
-        let line_b_chip_detection = &mut self.api.detect_chips(LineId::B).await.map_err(|err| err.to_kind());
+        let line_a_chip_detection = self.api.detect_chips(LineId::A).await.map_err(|err| err.to_kind());
+        let line_b_chip_detection = self.api.detect_chips(LineId::B).await.map_err(|err| err.to_kind());
 
         // END AREA WHERE WE DO THE ACTUAL WORK OF THE SERVICE LOOP
 
         let work = Instant::now().saturating_duration_since(work_start_timestamp);
-        max_work = max_work.max(work);
+        self.max_work = self.max_work.max(work);
 
         // this is counted before we update the diagnostics so the diagnostics include the cycle being reported!!
-        cycles_count += 1;
+        self.cycles_count += 1;
         
         ServiceDiagnostics {
             accumulator_diagnostics: accumulator_diagnostics,
             timing_diagnostics: TimingDiagnostics {
-                period, max_period, work, max_work,
+                period, max_period: self.max_period, work, max_work: self.max_work,
             },
             chip_state_diagnostics: ChipStateDiagnostics {
                 // this calls `*api.chips()` again instead of just using the already-read `chips`
@@ -346,19 +354,19 @@ impl<SPI: SpiDevice, const N: usize, OnStartup: AsyncFnMut(&mut Api<SPI, N>, Sta
                 most_recent_line_a_error: self.api.most_recent_line_a_error,
                 line_b_error_count: self.api.line_b_error_count,
                 most_recent_line_b_error: self.api.most_recent_line_b_error,
-                line_a_chips_detected_count: *line_a_chip_detection,
-                line_b_chips_detected_count: *line_b_chip_detection,
+                line_a_chips_detected_count: line_a_chip_detection,
+                line_b_chips_detected_count: line_b_chip_detection,
             },
             split: self.api.split(),
-            sleep_detection_spi_error_count,
-            break_detection_spi_error_count,
-            cycles_count,
+            sleep_detection_spi_error_count: self.sleep_detection_spi_error_count,
+            break_detection_spi_error_count: self.break_detection_spi_error_count,
+            cycles_count: self.cycles_count,
             segment_isospi_max_split_attempts: self.service_config.segment_isospi_max_split_attempts,
             segment_isospi_max_failed_verification_attempts: self.service_config.segment_isospi_max_failed_verification_attempts,
-            startup_reason: startup_reason,
-            startup_result: startup_result,
-            startups_count: startups_count,
-            startups_overtaken_by_another_startup_counts: startups_overtaken_by_another_startup_counts,
+            startup_reason: self.startup_reason,
+            startup_result: self.startup_result,
+            startups_count: self.startups_count,
+            startups_overtaken_by_another_startup_counts: self.startups_overtaken_by_another_startup_counts,
         }
     }
 

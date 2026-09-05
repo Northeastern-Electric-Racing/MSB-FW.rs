@@ -138,7 +138,7 @@ pub mod writeables {
     /// 
     /// Not all register groups are in here on purpose (since some need to be gaurded)
     #[diagnostic::on_unimplemented(
-        message = "`{Self}` cannot be written through `Service::write()`",
+        message = "`{Self}` cannot be written through `Api::write()`",
         label = "this register group is owned by the Service",
         note = "use the dedicated methods instead"
     )]
@@ -420,7 +420,7 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
     }
 
     /// Per-chip metadata.
-    pub(crate) const fn chips(&mut self) -> &[ChipState; N] {
+    pub const fn chips(&mut self) -> &[ChipState; N] {
         &mut self.chips
     }
 

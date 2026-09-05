@@ -272,8 +272,6 @@ impl TimingDiagnostics {
 /// This is generally just a snapshot of the `ChipState` properties for each chip, but with
 /// a few omitted values that aren't really relavent as diagnostics (like the cached configs),
 /// and a few extras added in due to the extra context Service provides.
-/// 
-/// For an instantaneous direct read of `ChipState`, `Service` provides the `.chips()` method.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChipStateDiagnostics<const N: usize> {
