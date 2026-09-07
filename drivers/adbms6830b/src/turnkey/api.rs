@@ -144,6 +144,7 @@ pub mod writeables {
     )]
     pub trait AppWritableGroup: WritableGroup {}
     impl AppWritableGroup for clear::ClearFlags {}
+    impl AppWritableGroup for clear::ClearOvervoltageUndervoltage {}
     impl AppWritableGroup for pwm::PwmA {}
     impl AppWritableGroup for pwm::PwmB {}
     impl AppWritableGroup for comm::WriteCommI2c {}
@@ -304,6 +305,7 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
         use crate::chip::registers::clear::{
             ClearFlags,
             types::ClearAction,
+            ClearOvervoltageUndervoltage,
         };
 
         // make sure they're awake to recieve the srst command first
@@ -340,11 +342,21 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
             return Err(err);
         }
 
+        // also clear all the OV/UV flags
+        let clear = ClearOvervoltageUndervoltage::clear_all();
+        let clears = [clear; N];
+        if let Err(err) = self.write::<ClearOvervoltageUndervoltage>(&clears).await {
+            #[cfg(feature = "defmt")]
+            defmt::error!("ADBMS6830B: Api: in `.reset()`: Failed to call `self.write()` while trying to modify ClearOvervoltageUndervoltage. Error: {}", err.to_kind());
+            
+            return Err(err);
+        }
+
         let boundary: usize = self.split().into();
         let split_active = boundary > 0 && boundary < N;
 
         // reset cached configA, and if a split is active, write the reset configA but with the COMM_BK bit set
-        // this returns what we should reset the command count to (normally 1, but 2 if we end up issuing the ConfigA write)
+        // this returns what we should reset the command count to
         let expected_command_count: u8 = if split_active {
             // if a split is active we need to re-write configA with COMM_BK. set_configa() will write a blank config, but with the COMM_BK bit set as necessary
             if let Err(err) = self.set_configa(&[ConfigA::new(); N]).await {
@@ -354,19 +366,19 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
                 return Err(err);
             }
 
-            // ClearFlags + ConfigA
-            2
+            // ClearFlags + ClearOvervoltageUndervoltage + ConfigA
+            3
         } else {
             // no split is active so cached configA should be blank, plus we don't need to write anything
             self.config_a = [ConfigA::new(); N];
 
-            // just ClearFlags
-            1
+            // just ClearFlags and ClearOvervoltageUndervoltage
+            2
         };
 
         // reset command counts for every chip
         for chip in self.chips.iter_mut() {
-            // command counter should be 1 or 2 at this point, since SRST resets it to 0, wakeup() doesn't increment it, ClearFlags increments it once (ccnt = 1), and if there is an active split, ConfigA increments it again (ccnt = 2)
+            // we should know the exact expected command count by now based on the `expected_command_count` block
             // there can't be any writes in-between this because this is &mut self, so even if ClearFlags gets .awaited another task can't do anything that raises command count
             chip.reset_command_count(expected_command_count);
         }
