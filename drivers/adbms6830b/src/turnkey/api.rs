@@ -330,11 +330,8 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
             return Err(err);
         }
 
-        // clear the SLEEP flag, and also the rail UV flags since wakeup from standby sets them 
-        let clear = ClearFlags::new()
-            .with_cl_sleep(ClearAction::Clear)
-            .with_cl_vauv(ClearAction::Clear)
-            .with_cl_vduv(ClearAction::Clear);
+        // clear all flags so we start from normal
+        let clear = ClearFlags::clear_all();
         let clears = [clear; N];
         if let Err(err) = self.write::<ClearFlags>(&clears).await {
             #[cfg(feature = "defmt")]
