@@ -367,7 +367,10 @@ pub mod types {
         /// This is a free-running C-ADC conversion counter. Resets with every ADCV command. Rolls over after the maximum value.
         /// 
         /// This struct needs to be constructed manually from a `ConversionsCounterLower` and `ConversionsCounterUpper`, via the `ConversionsCounter::new()` function.
+        /// 
+        /// See `ConversionsCount` for the combined `CT[10:0]` + `CTS[1:0]` counter.
         #[bitfield(u16, new = false, defmt = cfg(feature = "defmt"))]
+        #[derive(PartialEq, Eq)]
         pub struct ConversionsCounter {
             /// Lower 6 bits (`CT[5:0]` of the Conversion Counter
             #[bits(6, default = ConversionsCounterLower::DEFAULT)] lower: ConversionsCounterLower,
@@ -436,6 +439,8 @@ pub mod types {
         /// CT[10:0], CTS[1:0] can be treated as a 13-bit counter CCTS[12:0] that
         /// increments four times per sample. Can be read coherently to CADC results using the SNAP command to identify
         /// new or old samples. Coherency to SADC results is guaranteed only when CCTS is not 31, 32, 63, 64, …
+        /// 
+        /// You can create the 13-bit `CCTS[12:0]` view via the `ConversionsCount` type.
         #[bitfield(u16, defmt = cfg(feature = "defmt"))]
         #[derive(PartialEq, Eq)]
         pub struct ConversionsSubcounter {
@@ -444,6 +449,46 @@ pub mod types {
             #[bits(14, default = 0)]       _reserved: u16,
         }
         impl ConversionsSubcounter { pub const DEFAULT: Self = Self::new(); }
+
+        /// The combined conversion count (CCTS[12:0]). 13-bit value. Default is 0.
+        /// 
+        /// This counter resets with every ADCV command and rolls over after its maximum value.
+        /// It can be read coherently to C-ADC results using the SNAP command to identify new or old samples. Coherency
+        /// to S-ADC results is guaranteed only when `CCTS` is not 31, 32, 63, 64, ….
+        #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        pub struct ConversionsCount {
+            counter: ConversionsCounter,
+            subcounter: ConversionsSubcounter,
+        }
+        impl ConversionsCount {
+            /// Creates a new `ConversionsCount` from the three raw StatusC fields.
+            pub const fn new(lower: ConversionsCounterLower, upper: ConversionsCounterUpper, subcounter: ConversionsSubcounter) -> Self {
+                Self::from_counter(ConversionsCounter::new(lower, upper), subcounter)
+            }
+
+            /// Creates a new `ConversionsCount` from a `ConversionsCounter` and a `ConversionsSubcounter`.
+            pub const fn from_counter(counter: ConversionsCounter, subcounter: ConversionsSubcounter) -> Self {
+                Self { counter, subcounter }
+            }
+
+            /// Full 13-bit conversion count (`CCTS[12:0]`). This increments four times per sample.
+            pub const fn value(&self) -> u16 {
+                (self.samples() << 2) | self.subsample() as u16
+            }
+
+            /// Sample count (`CT[10:0]`). This increments once per sample.
+            pub const fn samples(&self) -> u16 { self.counter.value() }
+
+            /// Subsample count within the current sample (`CTS[1:0]`).
+            pub const fn subsample(&self) -> u8 { self.subcounter.value() }
+
+            /// `ConversionsCounter` part of this count (`CT[10:0]`).
+            pub const fn ct(&self) -> ConversionsCounter { self.counter }
+
+            /// `ConversionsSubcounter` part of this count (`CTS[1:0]`).
+            pub const fn cts(&self) -> ConversionsSubcounter { self.subcounter }
+        }
     }
 
     /// Field types relavent to Status Register D. See Table 109 on pages 73-74 of the datasheet.
