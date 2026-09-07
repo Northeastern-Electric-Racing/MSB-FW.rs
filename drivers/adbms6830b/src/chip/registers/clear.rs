@@ -176,3 +176,161 @@ impl ClearFlags {
             .with_cl_cs16flt(types::ClearAction::Clear)
     }
 }
+
+/// Clear Overvoltage and Undervoltage Command (CLOVUV). Contains six 1-byte registers (so 6 bytes total).
+/// 
+/// This is basically a W1C register, so writing `ClearAction::DontClear` won't force the flag to zero or anything.
+/// The flag states only change if you specifically write `ClearAction::Clear` to them. Because of this,  all of these flags
+/// default to `ClearAction::DontClear` if you create an instance with `ClearFlags::new()` (meaning that by default, writing this command
+/// won't change the states of any flags). You can then use the builder functions to configure clears for any of the flags you are interested in.
+/// 
+/// It may also be useful to see the helper `ClearOvervoltageUndervoltage::clear_all()` if you want to clear these flags
+/// all at once without having to configure each one manually.
+/// 
+/// See Table 26 on page 28 of the datasheet.
+#[register_group(
+    bytes = 6,
+    write = Some(commands::clear::clovuv().frame()),
+    read = None,
+)]
+#[bitfield(u64, defmt = cfg(feature = "defmt"))]
+pub struct ClearOvervoltageUndervoltage {
+    /// Clear C1 Undervoltage. Corresponds to `CL_C1UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c1uv: types::ClearAction,
+    /// Clear C! Overvoltage. Corresponds to `CL_C1OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c1ov: types::ClearAction,
+
+    /// Clear C2 Undervoltage. Corresponds to `CL_C2UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c2uv: types::ClearAction,
+    /// Clear C2 Overvoltage. Corresponds to `CL_C2OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c2ov: types::ClearAction,
+
+    /// Clear C3 Undervoltage. Corresponds to `CL_C3UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c3uv: types::ClearAction,
+    /// Clear C3 Overvoltage. Corresponds to `CL_C3OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c3ov: types::ClearAction,
+
+    /// Clear C4 Undervoltage. Corresponds to `CL_C4UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c4uv: types::ClearAction,
+    /// Clear C4 Overvoltage. Corresponds to `CL_C4OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c4ov: types::ClearAction,
+
+    /// Clear C5 Undervoltage. Corresponds to `CL_C5UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c5uv: types::ClearAction,
+    /// Clear C5 Overvoltage. Corresponds to `CL_C5OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c5ov: types::ClearAction,
+
+    /// Clear C6 Undervoltage. Corresponds to `CL_C6UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c6uv: types::ClearAction,
+    /// Clear C6 Overvoltage. Corresponds to `CL_C6OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c6ov: types::ClearAction,
+
+    /// Clear C7 Undervoltage. Corresponds to `CL_C7UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c7uv: types::ClearAction,
+    /// Clear C7 Overvoltage. Corresponds to `CL_C7OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c7ov: types::ClearAction,
+
+    /// Clear C8 Undervoltage. Corresponds to `CL_C8UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c8uv: types::ClearAction,
+    /// Clear C8 Overvoltage. Corresponds to `CL_C8OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c8ov: types::ClearAction,
+
+    /// Clear C9 Undervoltage. Corresponds to `CL_C9UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c9uv: types::ClearAction,
+    /// Clear C9 Overvoltage. Corresponds to `CL_C9OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c9ov: types::ClearAction,
+
+    /// Clear C10 Undervoltage. Corresponds to `CL_C10UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c10uv: types::ClearAction,
+    /// Clear C10 Overvoltage. Corresponds to `CL_C10OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c10ov: types::ClearAction,
+
+    /// Clear C11 Undervoltage. Corresponds to `CL_C11UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c11uv: types::ClearAction,
+    /// Clear C11 Overvoltage. Corresponds to `CL_C11OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c11ov: types::ClearAction,
+
+    /// Clear C12 Undervoltage. Corresponds to `CL_C12UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c12uv: types::ClearAction,
+    /// Clear C12 Overvoltage. Corresponds to `CL_C12OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c12ov: types::ClearAction,
+
+    /// Clear C13 Undervoltage. Corresponds to `CL_C13UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c13uv: types::ClearAction,
+    /// Clear C13 Overvoltage. Corresponds to `CL_C13OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c13ov: types::ClearAction,
+
+    /// Clear C14 Undervoltage. Corresponds to `CL_C14UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c14uv: types::ClearAction,
+    /// Clear C14 Overvoltage. Corresponds to `CL_C14OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c14ov: types::ClearAction,
+
+    /// Clear C15 Undervoltage. Corresponds to `CL_C15UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c15uv: types::ClearAction,
+    /// Clear C15 Overvoltage. Corresponds to `CL_C15OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c15ov: types::ClearAction,
+
+    /// Clear C16 Undervoltage. Corresponds to `CL_C16UV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c16uv: types::ClearAction,
+    /// Clear C16 Overvoltage. Corresponds to `CL_C16OV`
+    #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c16ov: types::ClearAction,
+
+    /// Empty for STDR4 and STDR5.
+    #[bits(16, default = 0)]                                           _empty: u16,
+    
+    /// The 2-byte padding to make this 6-byte register group fit into u64
+    #[bits(16, default = 0)]                                           _padding: u16,
+}
+impl ClearOvervoltageUndervoltage {
+    /// Creates a new `ClearOvervoltageUndervoltage` where all flags are set to `ClearAction::Clear`.
+    pub const fn clear_all() -> Self {
+        ClearOvervoltageUndervoltage::new()
+            .with_cl_c1uv(types::ClearAction::Clear)
+            .with_cl_c1ov(types::ClearAction::Clear)
+
+            .with_cl_c2uv(types::ClearAction::Clear)
+            .with_cl_c2ov(types::ClearAction::Clear)
+
+            .with_cl_c3uv(types::ClearAction::Clear)
+            .with_cl_c3ov(types::ClearAction::Clear)
+
+            .with_cl_c4uv(types::ClearAction::Clear)
+            .with_cl_c4ov(types::ClearAction::Clear)
+
+            .with_cl_c5uv(types::ClearAction::Clear)
+            .with_cl_c5ov(types::ClearAction::Clear)
+
+            .with_cl_c6uv(types::ClearAction::Clear)
+            .with_cl_c6ov(types::ClearAction::Clear)
+
+            .with_cl_c7uv(types::ClearAction::Clear)
+            .with_cl_c7ov(types::ClearAction::Clear)
+
+            .with_cl_c8uv(types::ClearAction::Clear)
+            .with_cl_c8ov(types::ClearAction::Clear)
+
+            .with_cl_c9uv(types::ClearAction::Clear)
+            .with_cl_c9ov(types::ClearAction::Clear)
+
+            .with_cl_c10uv(types::ClearAction::Clear)
+            .with_cl_c10ov(types::ClearAction::Clear)
+
+            .with_cl_c11uv(types::ClearAction::Clear)
+            .with_cl_c11ov(types::ClearAction::Clear)
+
+            .with_cl_c12uv(types::ClearAction::Clear)
+            .with_cl_c12ov(types::ClearAction::Clear)
+
+            .with_cl_c13uv(types::ClearAction::Clear)
+            .with_cl_c13ov(types::ClearAction::Clear)
+
+            .with_cl_c14uv(types::ClearAction::Clear)
+            .with_cl_c14ov(types::ClearAction::Clear)
+
+            .with_cl_c15uv(types::ClearAction::Clear)
+            .with_cl_c15ov(types::ClearAction::Clear)
+
+            .with_cl_c16uv(types::ClearAction::Clear)
+            .with_cl_c16ov(types::ClearAction::Clear)
+    }
+}
