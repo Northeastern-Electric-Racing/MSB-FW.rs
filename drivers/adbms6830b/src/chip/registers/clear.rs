@@ -11,7 +11,7 @@ pub mod types {
 
     /// Whether a CLRFLAG/CLOVUV bit clears its corresponding flag.
     ///
-    /// See Table 25 on page 24 and Table 26 on page 24 of the datasheet.
+    /// See Table 25 on page 27 and Table 26 on page 28 of the datasheet.
     #[repr(u8)]
     #[bitenum]
     #[derive(BitfieldEnumDefault, Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -181,7 +181,7 @@ impl ClearFlags {
 /// 
 /// This is basically a W1C register, so writing `ClearAction::DontClear` won't force the flag to zero or anything.
 /// The flag states only change if you specifically write `ClearAction::Clear` to them. Because of this,  all of these flags
-/// default to `ClearAction::DontClear` if you create an instance with `ClearFlags::new()` (meaning that by default, writing this command
+/// default to `ClearAction::DontClear` if you create an instance with `ClearOvervoltageUndervoltage::new()` (meaning that by default, writing this command
 /// won't change the states of any flags). You can then use the builder functions to configure clears for any of the flags you are interested in.
 /// 
 /// It may also be useful to see the helper `ClearOvervoltageUndervoltage::clear_all()` if you want to clear these flags
@@ -197,7 +197,7 @@ impl ClearFlags {
 pub struct ClearOvervoltageUndervoltage {
     /// Clear C1 Undervoltage. Corresponds to `CL_C1UV`
     #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c1uv: types::ClearAction,
-    /// Clear C! Overvoltage. Corresponds to `CL_C1OV`
+    /// Clear C1 Overvoltage. Corresponds to `CL_C1OV`
     #[bits(1, default = types::ClearAction::DEFAULT)] pub cl_c1ov: types::ClearAction,
 
     /// Clear C2 Undervoltage. Corresponds to `CL_C2UV`

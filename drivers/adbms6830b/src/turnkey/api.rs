@@ -304,7 +304,6 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
     pub async fn reset(&mut self) -> Result<(), Error<SPI::Error>> {
         use crate::chip::registers::clear::{
             ClearFlags,
-            types::ClearAction,
             ClearOvervoltageUndervoltage,
         };
 
