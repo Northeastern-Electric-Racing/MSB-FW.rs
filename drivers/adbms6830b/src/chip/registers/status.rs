@@ -96,6 +96,10 @@ pub mod types {
             /// No mismatch between C-ADC and S-ADC measurement on Channel `X` occurred.
             Okay = 0,
         }
+        impl ComparisonFault {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// 5V analog rail OV (VA_OV). One-bit field. This bit defaults to `1`.
         /// 
@@ -111,6 +115,10 @@ pub mod types {
             OvervoltageEventDetected = 1,
             /// No overvoltage event detected on the analog power rail.
             Okay = 0,
+        }
+        impl AnalogRailOvervoltage {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// 5V analog rail UV (VA_UV). One-bit field. This bit defaults to `1`.
@@ -129,6 +137,10 @@ pub mod types {
             /// No undervoltage event detected on the analog power rail.
             Okay = 0,
         }
+        impl AnalogRailUndervoltage {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// 3V digital rail OV (VD_OV). One-bit field. This bit defaults to `1`.
         /// 
@@ -144,6 +156,10 @@ pub mod types {
             OvervoltageEventDetected = 1,
             /// No overvoltage event detected on the digital power rail.
             Okay = 0,
+        }
+        impl DigitalRailOvervoltage {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// 3V digital rail UV (VD_UV). One-bit field. This bit defaults to `1`.
@@ -162,6 +178,10 @@ pub mod types {
             /// No undervoltage event detected on the digital power rail.
             Okay = 0,
         }
+        impl DigitalRailUndervoltage {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// C-trim error detection (CED). One-bit field. This bit defaults to `1`.
         /// 
@@ -177,6 +197,10 @@ pub mod types {
             CTrimErrorDetected = 1,
             /// No trim error detected in C-NVM.
             Okay = 0,
+        }
+        impl CTrimError {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// C-trim multiple error detection (CMED). One-bit field. This bit defaults to `1`.
@@ -194,6 +218,10 @@ pub mod types {
             /// No multiple trim errors detected in C-NVM.
             Okay = 0,
         }
+        impl CTrimMultipleError {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// S-trim error detection (SED). One-bit field. This bit defaults to `1`.
         /// 
@@ -210,6 +238,10 @@ pub mod types {
             /// No trim error detected in S-NVM.
             Okay = 0,
         }
+        impl STrimError {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// S-trim multiple error detection (SMED). One-bit field. This bit defaults to `1`.
         /// 
@@ -225,6 +257,10 @@ pub mod types {
             STrimMultipleErrorsDetected = 1,
             /// No multiple trim errors detected in S-NVM.
             Okay = 0,
+        }
+        impl STrimMultipleError {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// Supply rail delta (VDE). One-bit field. This bit defaults to `1`.
@@ -245,6 +281,10 @@ pub mod types {
             AnyDeltaDetected = 1,
             /// No delta of 5 V supplies detected
             Okay = 0,
+        }
+        impl SupplyRailDelta {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// Supply rail delta latent (VDEL). One-bit field. This bit defaults to `1`.
@@ -267,6 +307,10 @@ pub mod types {
             /// Not all the 5 V supplies differed from VREG by more than 0.5 V.
             Okay = 0,
         }
+        impl SupplyRailDeltaLatent {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// ComparisonActive (COMP). One-bit field. This bit defaults to `0`.
         /// 
@@ -283,6 +327,10 @@ pub mod types {
             #[fallback]
             ComparisonOff = 0,
         }
+        impl ComparisonActive {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// SPI fault (SPIFLT). One-bit field. This bit defaults to `1`.
         #[repr(u8)]
@@ -296,6 +344,10 @@ pub mod types {
             MismatchOccured = 1,
             /// No mismatch between redundant SPI slave outputs occurred.
             Okay = 0,
+        }
+        impl SpiFault {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// Sleep mode detection (SLEEP). One-bit field. This bit defaults to `1`.
@@ -313,6 +365,10 @@ pub mod types {
             /// The device has not power cycled or entered sleep mode.
             SleepModeNotDetected = 0,
         }
+        impl SleepModeDetection {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// Thermal shutdown status (THSD). One-bit field. This bit defaults to `0`.
         /// 
@@ -328,6 +384,10 @@ pub mod types {
             #[default]
             #[fallback]
             DidNotOccur = 0,
+        }
+        impl ThermalShutdownStatus {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// Test mode detection (TMODCHK). One-bit field. This bit defaults to `1`.
@@ -345,6 +405,10 @@ pub mod types {
             /// The device has not activated a test mode.
             TestModeNotDetected = 0,
         }
+        impl TestModeDetection {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// Oscillator check (OSCCHK). One-bit field. This bit defaults to `1`.
         /// 
@@ -360,6 +424,10 @@ pub mod types {
             OutOfRangeOscillatorDetected = 1,
             /// No out of range oscillator counts are detected.
             Okay = 0,
+        }
+        impl OscillatorCheck {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// Conversions counter (CT[10:0]). 11-bit field. Default is 0.
