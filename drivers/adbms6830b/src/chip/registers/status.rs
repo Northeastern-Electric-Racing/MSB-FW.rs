@@ -578,6 +578,10 @@ pub mod types {
             /// Cell `x` not flagged for overvoltage condition.
             Okay = 0,
         }
+        impl CellOvervoltageFlag {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
+        }
 
         /// Cell `x` undervoltage flag (CxUV). One-bit field. This bit defaults to `1`.
         /// 
@@ -593,6 +597,10 @@ pub mod types {
             Undervoltage = 1,
             /// Cell `x` not flagged for undervoltage condition.
             Okay = 0,
+        }
+        impl CellUndervoltageFlag {
+            /// Is this flag set?
+            pub const fn is_set(&self) -> bool { (*self as u8) == 1}
         }
 
         /// Oscillator check counter (OC_CNTR[7:0]). 8-bit field. Default is 0.

@@ -427,7 +427,7 @@ impl<SPI: SpiDevice, const N: usize> Service<SPI, N> {
 
         let api = &mut self.api;
 
-        // RDSTATC doesn't increment the command counter, so this doesn't perturb what we're measuring.
+        // note: RDSTATC doesn't increment the command counter (good)
         let mut statuses = api.read::<StatusC>().await;
         if statuses.all_ok() && statuses.iter().flatten().all(|r: crate::line::ChipResponse<StatusC>| r.data().sleep() == SleepModeDetection::SleepModeNotDetected) {
             return Ok(SleepDetectionResult::SleepNotDetected);
