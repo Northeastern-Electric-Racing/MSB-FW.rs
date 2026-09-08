@@ -1,0 +1,10 @@
+[package]
+name = "cangen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitfield-struct.workspace = true
+embedded-can.workspace = true
+# not workspace as not thumbv8/no_std
+cangen-macro.path = "./cangen-macro"

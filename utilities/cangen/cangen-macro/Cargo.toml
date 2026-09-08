@@ -1,0 +1,15 @@
+[package]
+name = "cangen-macro"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quote = "1.0.46"
+syn = "2.0.118"
+definition-rs.path = "./Odyssey-Definitions/definition-rs"
+serde_json = "1.0.150"
+proc-macro2 = "1.0.106"
+heck = "0.5.0"
+
+[lib]
+proc-macro = true

@@ -1,0 +1,14 @@
+{
+    "name": "firmware-rs",
+    "lspclient": {
+        "servers": {
+            "rust": {
+                "initializationOptions": {
+                    "check": {
+                        "allTargets": false
+                    }
+                }
+            }
+        }
+    }
+}

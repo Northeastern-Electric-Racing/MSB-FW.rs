@@ -7,10 +7,12 @@
 //!
 //! The bus is configured for Classical CAN at 500 kbit/s.  
 #![no_std]
-use defmt::{warn};
+use defmt::warn;
 use embassy_futures::select::{Either, select};
 use embassy_stm32::can::filter::FilterType::{DedicatedDual, DedicatedSingle};
-use embassy_stm32::can::filter::{Action, ExtendedFilter, ExtendedFilterSlot, StandardFilter, StandardFilterSlot};
+use embassy_stm32::can::filter::{
+    Action, ExtendedFilter, ExtendedFilterSlot, StandardFilter, StandardFilterSlot,
+};
 use embassy_stm32::can::{CanConfigurator, Frame};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Receiver, Sender};
@@ -35,7 +37,7 @@ impl NerCan {
     /// - A clock divider of 1 and the data bit timing required for 500 kbit/s.
     /// - Transmit pause enabled.
     /// - A global filter that rejects all frames by default.
-    /// 
+    ///
     /// ** It is expected that the user manually configures the CAn Std and Extended Filters before running the can_handler task
     /// ** Hardcodes bitrate to 500 kbit/s, if CAN sampling causes issues, this must be adjusted in this lib
     pub fn init(mut can_configurator: CanConfigurator<'static>) -> Self {
@@ -59,7 +61,12 @@ impl NerCan {
 
     /// Sets adds a new CAN Standard Filter at the given slot
     /// NOTE: will panic if the given slot is already in use
-    pub fn add_standard_filter(mut self, std_filter_slot: StandardFilterSlot, std_id1: u16, std_id2: Option<u16>) -> Self {
+    pub fn add_standard_filter(
+        mut self,
+        std_filter_slot: StandardFilterSlot,
+        std_id1: u16,
+        std_id2: Option<u16>,
+    ) -> Self {
         if self.used_std_slots.contains(&std_filter_slot) {
             panic!("The selected CAN Standard Filter Slot is already in use.");
         }
@@ -67,14 +74,19 @@ impl NerCan {
         let mut std = StandardFilter::default();
         match std_id2 {
             Some(id2) => {
-                std.filter = DedicatedDual(StandardId::new(std_id1).unwrap(), StandardId::new(id2).unwrap());
+                std.filter = DedicatedDual(
+                    StandardId::new(std_id1).unwrap(),
+                    StandardId::new(id2).unwrap(),
+                );
             }
             None => {
                 std.filter = DedicatedSingle(StandardId::new(std_id1).unwrap());
             }
         }
         std.action = Action::StoreInFifo0;
-        self.can_configurator.properties().set_standard_filter(std_filter_slot, std);
+        self.can_configurator
+            .properties()
+            .set_standard_filter(std_filter_slot, std);
         let _ = self.used_std_slots.push(std_filter_slot);
 
         self
@@ -82,22 +94,32 @@ impl NerCan {
 
     /// Sets adds a new CAN Extended Filter at the given slot
     /// NOTE: will panic if the given slot is already in use
-    pub fn add_extended_filter(mut self, ext_filter_slot: ExtendedFilterSlot, ext_id1: u32, ext_id2: Option<u32>) -> Self {
+    pub fn add_extended_filter(
+        mut self,
+        ext_filter_slot: ExtendedFilterSlot,
+        ext_id1: u32,
+        ext_id2: Option<u32>,
+    ) -> Self {
         if self.used_ext_slots.contains(&ext_filter_slot) {
             panic!("The selected CAN Extended Filter Slot is already in use.");
         }
 
         let mut ext = ExtendedFilter::default();
-        match ext_id2 { 
+        match ext_id2 {
             Some(id2) => {
-                ext.filter = DedicatedDual(ExtendedId::new(ext_id1).unwrap(), ExtendedId::new(id2).unwrap());
+                ext.filter = DedicatedDual(
+                    ExtendedId::new(ext_id1).unwrap(),
+                    ExtendedId::new(id2).unwrap(),
+                );
             }
             None => {
                 ext.filter = DedicatedSingle(ExtendedId::new(ext_id1).unwrap());
             }
         }
         ext.action = Action::StoreInFifo0;
-        self.can_configurator.properties().set_extended_filter(ext_filter_slot, ext);
+        self.can_configurator
+            .properties()
+            .set_extended_filter(ext_filter_slot, ext);
         let _ = self.used_ext_slots.push(ext_filter_slot);
 
         self
@@ -116,21 +138,25 @@ impl NerCan {
 ///   program for transmission onto the bus.
 ///
 #[embassy_executor::task]
-pub async fn can_handler(can_configurator: CanConfigurator<'static>, sender: Sender<'static, ThreadModeRawMutex, Frame, 16>, receiver: Receiver<'static, ThreadModeRawMutex, Frame, 16>) {
+pub async fn can_handler(
+    can_configurator: CanConfigurator<'static>,
+    sender: Sender<'static, ThreadModeRawMutex, Frame, 16>,
+    receiver: Receiver<'static, ThreadModeRawMutex, Frame, 16>,
+) {
     // Starts Classical CAN transmission and receival
     let mut can = can_configurator.into_normal_mode();
 
     // Loop to handle both receiving and sending
     loop {
         match select(receiver.receive(), can.read()).await {
-        // Handle sending out a CAN message
-        Either::First(frame) => {
+            // Handle sending out a CAN message
+            Either::First(frame) => {
                 if can.write(&frame).await.is_some() {
                     warn!("Dequeing can frames!");
                 }
             }
-        // Handle receiving and CAN message and passing to another task
-        Either::Second(res) => match res {      
+            // Handle receiving and CAN message and passing to another task
+            Either::Second(res) => match res {
                 Ok(can_recv) => {
                     let frame = can_recv.frame;
                     let _ = sender.send(frame).await;
