@@ -55,6 +55,14 @@ pub mod types {
         /// ~100% duty cycle.
         Pct100_0 = 15,
     }
+    impl PwmDutyCycleConfig {
+        /// Whether or not this PWM config configures the cell to be balancing.
+        /// 
+        /// A cell is balancing if its PwmDutyCycleConfig is anything other than `Disabled`.
+        pub const fn is_balancing(&self) -> bool {
+            !matches!(*self, PwmDutyCycleConfig::Disabled)
+        }
+    }
 }
 
 /// PWM Register Group A (PWMA). Contains six 1-byte registers (so 6 bytes total).
