@@ -666,12 +666,14 @@ impl<SPI: SpiDevice, const N: usize> Api<SPI, N> {
         line: LineId,
         command: Command,
     ) -> Result<(), Error<SPI::Error>> {
-        if self.count(line) == 0 {
+        let count = self.count(line);
+
+        if count == 0 {
             return Ok(());
         }
 
         self.note(line, command.frame());
-        let result = self.line_mut(line).command(command).await;
+        let result = self.line_mut(line).command(count, command).await;
         if let Err(err) = &result {
             match line {
                 LineId::A => {
