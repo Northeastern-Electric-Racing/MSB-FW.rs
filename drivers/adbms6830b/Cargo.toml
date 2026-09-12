@@ -19,7 +19,4 @@ embedded-hal-bus.workspace = true
 embassy-executor.workspace = true
 embassy-sync.workspace = true
 
-function_name = { version = "0.3.0" }
-variant_count = { version = "1.2.1" }
-
 adbms6830b-macros = { path = "adbms6830b_macros" }
