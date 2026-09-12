@@ -85,7 +85,7 @@ pub enum IsChipFailedResult {
     /// The chip's total attempts for this window are below `segment_isospi_min_attempts_for_fail`.
     /// In other words, chip cannot be reliably determined as `ChipFailed` or `ChipOkay` because the current window
     /// hasn't collected enough PEC data to do so.
-    Undetermiend,
+    Undetermined,
 }
 
 /// Represents the PecMask states.
@@ -299,7 +299,7 @@ impl<const N: usize> Accumulator<N> {
         if self.attempts[chip] < self.config.segment_isospi_min_attempts_for_fail {
             // increment diagnostic for how many times a chip couldn't be judged just due to the min attempts
             self.below_min_attempts_for_fail_count += 1;
-            return IsChipFailedResult::Undetermiend;
+            return IsChipFailedResult::Undetermined;
         }
         // okay at this point we know we have enough PEC attempt data to actually do the check reliably. So:
         // if this is true we should flag this chip as failed (since we have exceeded the threshold for failing chips)
@@ -424,7 +424,7 @@ impl<const N: usize> Accumulator<N> {
                     enum Outcome {
                         /// At least one chip was undetermined, so we can't conclude anything right now.
                         AnyUndetermined,
-                        /// No chips were undetermiend, so we have an `all_okay` result to inspect.
+                        /// No chips were undetermined, so we have an `all_okay` result to inspect.
                         /// 
                         /// If `all_okay` is true, all chips came back successful. If `all_okay` is false, at least
                         /// one chip came back failed. 
@@ -434,7 +434,7 @@ impl<const N: usize> Accumulator<N> {
                         let mut num_failed: usize = 0;
                         for chip in at..N {
                             match self.is_chip_failed(&failure_pct, chip) {
-                                IsChipFailedResult::Undetermiend => {
+                                IsChipFailedResult::Undetermined => {
                                     break 'get_outcome Outcome::AnyUndetermined;
                                 },
                                 IsChipFailedResult::ChipFailed => {
@@ -449,7 +449,7 @@ impl<const N: usize> Accumulator<N> {
                     };
 
                     self.state = match outcome {
-                        // case: at least one chip as undetermiend so we need to retry until we can prove something
+                        // case: at least one chip as undetermined so we need to retry until we can prove something
                         Outcome::AnyUndetermined => {
                             self.reset_chips();
                             State::Verifying {
