@@ -439,13 +439,23 @@ impl<SPI: SpiDevice, const N: usize> Line<SPI, N> {
 /// Conversion times from the datasheet (milliseconds).
 pub mod conversion_times {
     /// C-ADC single shot conversion.
+    /// 
+    /// The C-ADC conversion time is cited as 1ms in the "CONTINUOUS OR SINGLE SHOT MEASUREMENTS" section on page 20 of the datasheet.
     pub const C_ADC_MS: u64 = 1;
     /// S-ADC conversion (and a redundant ADCV for RD = 1).
+    /// 
+    /// This is tSADC from page 18 on the datasheet.
     pub const S_ADC_MS: u64 = 8;
     /// AUX ADC conversion (ADAX).
+    /// 
+    /// This is tAUX from page 18 of the datasheet.
     pub const AUX_MS: u64 = 1;
     /// AUX2 ADC conversion (ADAX2).
+    /// 
+    /// This is tAUX2 on page 18 of the datasheet.
     pub const AUX2_MS: u64 = 8;
     /// Added to any of the above when starting from the standby state (max).
+    /// 
+    /// This is tREFUP from Table 7 on page 8 of the datasheet.
     pub const REFUP_MS: u64 = 5;
 }
