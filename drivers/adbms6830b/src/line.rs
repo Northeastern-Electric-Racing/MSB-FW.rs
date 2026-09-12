@@ -237,6 +237,7 @@ impl<SPI: SpiDevice, const N: usize> Line<SPI, N> {
                     .transaction(&mut [Operation::Write(&bytes), payload])
                     .await
             }
+            // this is only used for `command()` commands where they are just a command with no payload
             None => self.spi.transaction(&mut [Operation::Write(&bytes)]).await,
         }
         .map_err(Error::Spi);
